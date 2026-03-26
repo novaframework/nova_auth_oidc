@@ -1,0 +1,11 @@
+{application, nova_auth_oidc, [
+    {description, "OpenID Connect authentication for Nova"},
+    {vsn, "git"},
+    {registered, [nova_auth_oidc_sup]},
+    {mod, {nova_auth_oidc_app, []}},
+    {applications, [kernel, stdlib, crypto, nova, nova_auth, oidcc]},
+    {env, []},
+    {modules, []},
+    {licenses, ["MIT"]},
+    {links, [{"GitHub", "https://github.com/Taure/nova_auth_oidc"}]}
+]}.
