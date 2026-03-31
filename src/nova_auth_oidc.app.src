@@ -6,6 +6,6 @@
     {applications, [kernel, stdlib, crypto, nova, nova_auth, oidcc]},
     {env, []},
     {modules, []},
-    {licenses, ["MIT"]},
-    {links, [{"GitHub", "https://github.com/Taure/nova_auth_oidc"}]}
+    {licenses, ["Apache-2.0"]},
+    {links, [{"GitHub", "https://github.com/novaframework/nova_auth_oidc"}]}
 ]}.
