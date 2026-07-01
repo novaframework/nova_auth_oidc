@@ -37,7 +37,12 @@ init_per_suite(Config) ->
     Config.
 
 end_per_suite(_Config) ->
-    catch persistent_term:erase({nova_auth_oidc, test_oidc_config}),
+    _ =
+        (try
+            persistent_term:erase({nova_auth_oidc, test_oidc_config})
+        catch
+            _:_ -> ok
+        end),
     ok.
 
 config_returns_defaults(_Config) ->
@@ -96,4 +101,9 @@ redirect_uri_builds_correctly(_Config) ->
 %%----------------------------------------------------------------------
 
 clear_cache() ->
-    catch persistent_term:erase({nova_auth_oidc, test_oidc_config}).
+    _ =
+        (try
+            persistent_term:erase({nova_auth_oidc, test_oidc_config})
+        catch
+            _:_ -> ok
+        end).

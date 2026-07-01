@@ -18,6 +18,8 @@ end
 -include_lib("jose/include/jose_jwt.hrl").
 
 -export([validate_bearer/2, validate_bearer/3, validate_token/3]).
+%% Exported for tests: standard-claim validation (exp/iss/aud) in isolation.
+-export([validate_claims/3]).
 
 -doc """
 Validate a JWT bearer token from the request's Authorization header.
@@ -97,7 +99,16 @@ validate_claims(AuthMod, Provider, Claims) ->
         Exp when Exp =< Now ->
             {error, token_expired};
         _ ->
-            validate_audience(AuthMod, Provider, Claims)
+            validate_issuer(AuthMod, Provider, Claims)
+    end.
+
+%% The token's `iss` must match the provider's configured issuer. Without this,
+%% a validly-signed token from any issuer the JWKS resolves could be accepted.
+validate_issuer(AuthMod, Provider, Claims) ->
+    {ok, #{issuer := ExpectedIss}} = nova_auth_oidc:provider_config(AuthMod, Provider),
+    case maps:get(~"iss", Claims, undefined) of
+        ExpectedIss -> validate_audience(AuthMod, Provider, Claims);
+        _ -> {error, invalid_issuer}
     end.
 
 validate_audience(AuthMod, Provider, Claims) ->
