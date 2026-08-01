@@ -1,9 +1,9 @@
 -module(nova_auth_oidc_jwt_tests).
 -include_lib("eunit/include/eunit.hrl").
 
-%% Standard-claim validation: exp -> iss -> aud. Provider config comes from
-%% test_oidc_config (authentik: issuer https://auth.example.com/application/o/myapp,
-%% client_id test-client-id).
+%% Standard-claim validation: exp -> sub -> iss -> aud -> azp. Provider
+%% config comes from test_oidc_config (authentik: issuer
+%% https://auth.example.com/application/o/myapp, client_id test-client-id).
 
 -define(ISS, ~"https://auth.example.com/application/o/myapp").
 -define(AUD, ~"test-client-id").
@@ -16,6 +16,21 @@ expired_rejected_test() ->
 
 missing_exp_rejected_test() ->
     ?assertEqual({error, missing_exp}, validate(maps:remove(~"exp", base()))).
+
+%% Erlang term order puts binaries/lists above every number, so a naive
+%% `Exp =< Now` would treat a non-numeric exp as "not expired" - this
+%% must be its own rejection, not silently accepted.
+non_numeric_exp_rejected_test() ->
+    ?assertEqual({error, invalid_exp}, validate((base())#{~"exp" => ~"not-a-number"})).
+
+missing_sub_rejected_test() ->
+    %% nova_auth:actor()'s `id` is mandatory and comes straight from `sub`
+    %% with no fallback - a token without one must fail validation, not
+    %% produce an actor with no identity.
+    ?assertEqual({error, missing_sub}, validate(maps:remove(~"sub", base()))).
+
+empty_sub_rejected_test() ->
+    ?assertEqual({error, missing_sub}, validate((base())#{~"sub" => ~""})).
 
 wrong_issuer_rejected_test() ->
     ?assertEqual(
@@ -30,6 +45,21 @@ wrong_audience_rejected_test() ->
 
 audience_list_pass_test() ->
     ?assertEqual(ok, validate((base())#{~"aud" => [~"other", ?AUD]})).
+
+%% OIDC Core 3.1.3.7: azp, when present, must equal our client_id - aud
+%% alone isn't proof the token was issued for us on a shared IdP where
+%% another client could list us as an additional audience.
+azp_matching_client_id_accepted_test() ->
+    ?assertEqual(ok, validate((base())#{~"azp" => ?AUD})).
+
+azp_absent_accepted_test() ->
+    ?assertEqual(ok, validate(base())).
+
+azp_mismatch_rejected_test() ->
+    ?assertEqual(
+        {error, invalid_azp},
+        validate((base())#{~"aud" => [~"other-client", ?AUD], ~"azp" => ~"other-client"})
+    ).
 
 validate(Claims) ->
     nova_auth_oidc_jwt:validate_claims(test_oidc_config, authentik, Claims).
@@ -52,7 +82,12 @@ past() -> erlang:system_time(second) - 3600.
 %% (what validate_token/3 now calls) folds over one.
 
 setup() ->
-    meck:new(oidcc_provider_configuration_worker, [passthrough, non_strict]),
+    %% No non_strict: this suite's entire job is pinning the contract
+    %% against the REAL oidcc_provider_configuration_worker module - the
+    %% bug being fixed was a dependency API mismatch, and non_strict
+    %% would let a renamed/removed get_jwks/1 pass silently instead of
+    %% failing the meck:expect below.
+    meck:new(oidcc_provider_configuration_worker, [passthrough]),
     ok.
 
 cleanup(_) ->
@@ -66,7 +101,11 @@ validate_token_test_() ->
             fun signed_token_from_multi_key_set_validates/0},
         {"an alg:none token is rejected, not treated as valid", fun alg_none_rejected/0},
         {"a token signed by a key that isn't in the JWKS is rejected",
-            fun wrong_key_signature_rejected/0}
+            fun wrong_key_signature_rejected/0},
+        {"an RSA public key replayed as an HMAC secret (alg confusion) is rejected",
+            fun hmac_alg_confusion_rejected/0},
+        {"a signature-valid token with an expired exp is still rejected by validate_token/3",
+            fun signature_valid_but_expired_claims_rejected/0}
     ]}.
 
 signed_token_validates() ->
@@ -92,8 +131,8 @@ alg_none_rejected() ->
     Priv = rsa_key(),
     mock_jwks(jwks_of([Priv])),
     Token = none_alg_token(claims()),
-    ?assertMatch(
-        {error, _},
+    ?assertEqual(
+        {error, invalid_signature},
         nova_auth_oidc_jwt:validate_token(test_oidc_config, authentik, Token)
     ).
 
@@ -102,8 +141,44 @@ wrong_key_signature_rejected() ->
     OtherPriv = rsa_key(),
     mock_jwks(jwks_of([Priv])),
     Token = sign_rs256(OtherPriv, claims()),
-    ?assertMatch(
-        {error, _},
+    ?assertEqual(
+        {error, invalid_signature},
+        nova_auth_oidc_jwt:validate_token(test_oidc_config, authentik, Token)
+    ).
+
+%% ?ALLOWED_ALGORITHMS excludes HS* precisely to close this off: an RSA
+%% public key IS public (published at the provider's JWKS endpoint), so
+%% if HMAC were allowed, an attacker could sign their own token with it
+%% as the HMAC secret and have it accepted as if the IdP had signed it.
+%% This attempt is rejected regardless (jose's own key-type matching
+%% also refuses to treat an RSA-family JWK as HMAC-compatible), so this
+%% pins the end-to-end property - a forged HS256 token using the public
+%% key is never accepted - rather than isolating the allowlist as the
+%% sole cause; adding ~"HS256" to ?ALLOWED_ALGORITHMS does not turn this
+%% specific test red, confirmed by trying it.
+hmac_alg_confusion_rejected() ->
+    Priv = rsa_key(),
+    mock_jwks(jwks_of([Priv])),
+    PubPem = element(2, jose_jwk:to_pem(jose_jwk:to_public(Priv))),
+    HmacJwk = jose_jwk:from_oct(PubPem),
+    Jwt = jose_jwt:from(claims()),
+    {_, Signed} = jose_jwt:sign(HmacJwk, #{~"alg" => ~"HS256"}, Jwt),
+    {_, Token} = jose_jws:compact(Signed),
+    ?assertEqual(
+        {error, invalid_signature},
+        nova_auth_oidc_jwt:validate_token(test_oidc_config, authentik, Token)
+    ).
+
+%% validate_claims/3 above is tested in isolation - this proves the two
+%% stages are actually wired together through validate_token/3: a
+%% cryptographically valid signature must not short-circuit claims
+%% validation.
+signature_valid_but_expired_claims_rejected() ->
+    Priv = rsa_key(),
+    mock_jwks(jwks_of([Priv])),
+    Token = sign_rs256(Priv, (claims())#{~"exp" => past()}),
+    ?assertEqual(
+        {error, token_expired},
         nova_auth_oidc_jwt:validate_token(test_oidc_config, authentik, Token)
     ).
 
