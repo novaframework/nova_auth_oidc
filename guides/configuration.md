@@ -15,6 +15,38 @@ defaults and cached in `persistent_term`.
 | `on_success` | `{redirect, binary()}` | `{redirect, ~"/"}` | Action after successful auth |
 | `on_failure` | `{status, integer()} \| {redirect, binary()}` | `{status, 401}` | Action on auth failure |
 | `claims_mapping` | `#{binary() => atom()} \| {module(), atom()}` | `#{}` | How to map claims to actor |
+| `provider_configuration_opts` | `oidcc_provider_configuration:opts()` | `#{}` | Options for every provider's discovery/JWKS fetch - see below |
+
+## Provider discovery/JWKS trust options
+
+On OTP 28+, the discovery/JWKS fetch already verifies TLS against the OS
+trust store by default. `provider_configuration_opts` lets you pin explicit
+options instead - most commonly a private CA bundle:
+
+```erlang
+provider_configuration_opts => #{
+    request_opts => #{
+        ssl => [
+            {verify, verify_peer},
+            {cacerts, public_key:cacerts_get()},
+            {depth, 4},
+            {customize_hostname_check, [
+                {match_fun, public_key:pkix_verify_hostname_match_fun(https)}
+            ]}
+        ]
+    }
+}
+```
+
+**Treat this key as a trust anchor, not just a TLS knob.** Besides
+`request_opts`, it also accepts `quirks` (`allow_unsafe_http`,
+`document_overrides`, `issuer_regex`), which can downgrade discovery to
+plaintext HTTP or override the discovery document's `jwks_uri`. Build it
+from static code, never from operator- or env-supplied data.
+
+Applies to every provider `ensure_providers/1` starts; there is no
+per-provider override. An unknown key here raises an error at
+`ensure_providers/1` rather than silently failing to apply.
 
 ## Provider Config
 

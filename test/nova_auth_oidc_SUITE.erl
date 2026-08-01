@@ -12,7 +12,10 @@
     provider_config_found/1,
     provider_config_not_found/1,
     provider_worker_name_format/1,
-    redirect_uri_builds_correctly/1
+    redirect_uri_builds_correctly/1,
+    config_defaults_provider_configuration_opts_to_empty/1,
+    config_merges_user_provider_configuration_opts/1,
+    ensure_providers_rejects_unknown_provider_configuration_opts_key/1
 ]).
 
 all() ->
@@ -29,7 +32,10 @@ groups() ->
             provider_config_found,
             provider_config_not_found,
             provider_worker_name_format,
-            redirect_uri_builds_correctly
+            redirect_uri_builds_correctly,
+            config_defaults_provider_configuration_opts_to_empty,
+            config_merges_user_provider_configuration_opts,
+            ensure_providers_rejects_unknown_provider_configuration_opts_key
         ]}
     ].
 
@@ -37,12 +43,17 @@ init_per_suite(Config) ->
     Config.
 
 end_per_suite(_Config) ->
-    _ =
-        (try
-            persistent_term:erase({nova_auth_oidc, test_oidc_config})
-        catch
-            _:_ -> ok
-        end),
+    lists:foreach(
+        fun(Mod) ->
+            _ =
+                (try
+                    persistent_term:erase({nova_auth_oidc, Mod})
+                catch
+                    _:_ -> ok
+                end)
+        end,
+        [test_oidc_config, test_oidc_config_tls, test_oidc_config_bad_pco]
+    ),
     ok.
 
 config_returns_defaults(_Config) ->
@@ -95,6 +106,37 @@ redirect_uri_builds_correctly(_Config) ->
     clear_cache(),
     Uri = nova_auth_oidc:redirect_uri(test_oidc_config, authentik),
     ?assertEqual(~"https://myapp.example.com/auth/authentik/callback", Uri).
+
+config_defaults_provider_configuration_opts_to_empty(_Config) ->
+    clear_cache(),
+    Cfg = nova_auth_oidc:config(test_oidc_config),
+    ?assertEqual(#{}, maps:get(provider_configuration_opts, Cfg)).
+
+config_merges_user_provider_configuration_opts(_Config) ->
+    _ =
+        (try
+            persistent_term:erase({nova_auth_oidc, test_oidc_config_tls})
+        catch
+            _:_ -> ok
+        end),
+    Cfg = nova_auth_oidc:config(test_oidc_config_tls),
+    #{request_opts := #{ssl := SslOpts}} = maps:get(provider_configuration_opts, Cfg),
+    ?assert(lists:member({verify, verify_peer}, SslOpts)).
+
+ensure_providers_rejects_unknown_provider_configuration_opts_key(_Config) ->
+    _ =
+        (try
+            persistent_term:erase({nova_auth_oidc, test_oidc_config_bad_pco})
+        catch
+            _:_ -> ok
+        end),
+    %% A typo'd key (ssl one level too high, should be under request_opts)
+    %% must fail loudly before ever attempting to start a provider worker
+    %% - not silently skip applying the caller's trust pinning.
+    ?assertError(
+        {unknown_provider_configuration_opts, [ssl]},
+        nova_auth_oidc:ensure_providers(test_oidc_config_bad_pco)
+    ).
 
 %%----------------------------------------------------------------------
 %% Internal
