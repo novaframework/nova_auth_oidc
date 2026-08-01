@@ -21,6 +21,23 @@ end
 %% Exported for tests: standard-claim validation (exp/iss/aud) in isolation.
 -export([validate_claims/3]).
 
+%% ID tokens are always asymmetrically signed (the private key never
+%% leaves the IdP) - RSA and ECDSA cover every major provider (Google,
+%% Apple, Microsoft, Discord all sign with RS256). HMAC variants are
+%% deliberately excluded: if this list included an HS* algorithm, a
+%% raw RSA public key (which IS public, published at the provider's
+%% JWKS endpoint) could be replayed as an HMAC secret to forge a token
+%% ("alg confusion") - see oidcc_jwt_util's own default and the RFC
+%% 8725 discussion of this class of vulnerability.
+-define(ALLOWED_ALGORITHMS, [
+    ~"RS256",
+    ~"RS384",
+    ~"RS512",
+    ~"ES256",
+    ~"ES384",
+    ~"ES512"
+]).
+
 -doc """
 Validate a JWT bearer token from the request's Authorization header.
 Uses the first configured provider for validation.
@@ -63,8 +80,16 @@ validate_token(AuthMod, Provider, Token) ->
     WorkerName = nova_auth_oidc:provider_worker_name(AuthMod, Provider),
     case get_jwks(WorkerName) of
         {ok, Jwks} ->
-            case jose_jwt:verify(Jwks, Token) of
-                {true, Jwt, _Jws} ->
+            %% get_jwks/1 always returns a #jose_jwk{keys = {jose_jwk_set,
+            %% _}} (a provider can rotate keys, so it's always a set, even
+            %% with one key) - jose_jwt:verify/2 has no clause for a key
+            %% set, it only matches a single #jose_jwk{} with a concrete
+            %% kty, so it always raised function_clause here. oidcc's own
+            %% verify_signature/3 folds over the set, matches by `kid` when
+            %% present, and enforces the algorithm allowlist itself (also
+            %% closing off alg:none and cross-algorithm confusion).
+            case oidcc_jwt_util:verify_signature(Token, ?ALLOWED_ALGORITHMS, Jwks) of
+                {ok, {Jwt, _Jws}} ->
                     Claims = Jwt#jose_jwt.fields,
                     case validate_claims(AuthMod, Provider, Claims) of
                         ok ->
@@ -73,8 +98,8 @@ validate_token(AuthMod, Provider, Token) ->
                         {error, _} = Err ->
                             Err
                     end;
-                {false, _, _} ->
-                    {error, invalid_signature}
+                {error, _} = Err ->
+                    Err
             end;
         {error, _} = Err ->
             Err
