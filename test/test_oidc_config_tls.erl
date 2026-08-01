@@ -16,7 +16,19 @@ config() ->
             }
         },
         base_url => ~"https://myapp.example.com",
+        %% A realistic, connectable TLS option list (not just a shape
+        %% check) - verify_peer alone is insufficient, cacerts is
+        %% required too. Mirrors guides/configuration.md's example.
         provider_configuration_opts => #{
-            request_opts => #{ssl => [verify_peer]}
+            request_opts => #{
+                ssl => [
+                    {verify, verify_peer},
+                    {cacerts, public_key:cacerts_get()},
+                    {depth, 4},
+                    {customize_hostname_check, [
+                        {match_fun, public_key:pkix_verify_hostname_match_fun(https)}
+                    ]}
+                ]
+            }
         }
     }.

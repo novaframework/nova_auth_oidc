@@ -14,7 +14,8 @@
     provider_worker_name_format/1,
     redirect_uri_builds_correctly/1,
     config_defaults_provider_configuration_opts_to_empty/1,
-    config_merges_user_provider_configuration_opts/1
+    config_merges_user_provider_configuration_opts/1,
+    ensure_providers_rejects_unknown_provider_configuration_opts_key/1
 ]).
 
 all() ->
@@ -33,7 +34,8 @@ groups() ->
             provider_worker_name_format,
             redirect_uri_builds_correctly,
             config_defaults_provider_configuration_opts_to_empty,
-            config_merges_user_provider_configuration_opts
+            config_merges_user_provider_configuration_opts,
+            ensure_providers_rejects_unknown_provider_configuration_opts_key
         ]}
     ].
 
@@ -41,12 +43,17 @@ init_per_suite(Config) ->
     Config.
 
 end_per_suite(_Config) ->
-    _ =
-        (try
-            persistent_term:erase({nova_auth_oidc, test_oidc_config})
-        catch
-            _:_ -> ok
-        end),
+    lists:foreach(
+        fun(Mod) ->
+            _ =
+                (try
+                    persistent_term:erase({nova_auth_oidc, Mod})
+                catch
+                    _:_ -> ok
+                end)
+        end,
+        [test_oidc_config, test_oidc_config_tls, test_oidc_config_bad_pco]
+    ),
     ok.
 
 config_returns_defaults(_Config) ->
@@ -113,9 +120,22 @@ config_merges_user_provider_configuration_opts(_Config) ->
             _:_ -> ok
         end),
     Cfg = nova_auth_oidc:config(test_oidc_config_tls),
-    ?assertEqual(
-        #{request_opts => #{ssl => [verify_peer]}},
-        maps:get(provider_configuration_opts, Cfg)
+    #{request_opts := #{ssl := SslOpts}} = maps:get(provider_configuration_opts, Cfg),
+    ?assert(lists:member({verify, verify_peer}, SslOpts)).
+
+ensure_providers_rejects_unknown_provider_configuration_opts_key(_Config) ->
+    _ =
+        (try
+            persistent_term:erase({nova_auth_oidc, test_oidc_config_bad_pco})
+        catch
+            _:_ -> ok
+        end),
+    %% A typo'd key (ssl one level too high, should be under request_opts)
+    %% must fail loudly before ever attempting to start a provider worker
+    %% - not silently skip applying the caller's trust pinning.
+    ?assertError(
+        {unknown_provider_configuration_opts, [ssl]},
+        nova_auth_oidc:ensure_providers(test_oidc_config_bad_pco)
     ).
 
 %%----------------------------------------------------------------------

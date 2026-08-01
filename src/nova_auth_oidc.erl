@@ -27,16 +27,26 @@ config() ->
       }}.
 ```
 
-## Provider discovery/JWKS TLS options
+## Provider discovery/JWKS trust options
 
-By default, each provider's `oidcc_provider_configuration_worker` fetches its
-discovery document and JWKS over `httpc`'s implicit default TLS options,
-which vary by OTP version. To pin explicit TLS options (e.g.
-`verify_peer`), set `provider_configuration_opts` in `config/0`:
+On OTP 28+, each provider's `oidcc_provider_configuration_worker` already
+verifies TLS (`verify_peer` against the OS trust store) by default when it
+fetches the discovery document and JWKS. To pin an explicit CA bundle or
+other TLS options instead of relying on that default, set
+`provider_configuration_opts` in `config/0`:
 
 ```erlang
 provider_configuration_opts => #{request_opts => #{ssl => my_tls_opts()}}
 ```
+
+**Treat this key as a trust anchor, not just a TLS knob**: its type is
+`oidcc_provider_configuration:opts()`, which besides `request_opts` also
+carries `quirks` - `allow_unsafe_http` (downgrades discovery to plaintext),
+`document_overrides` (can override `jwks_uri`/`token_endpoint` from the
+discovery document itself), and `issuer_regex` (relaxes issuer matching).
+Build it from static code, never from operator- or env-supplied data - a
+value that can be edited outside a release effectively controls where
+tokens are trusted from.
 
 This applies to every provider `ensure_providers/1` starts; there is no
 per-provider override.
@@ -139,6 +149,7 @@ Call this from your application's `start/2`. Idempotent.
 ensure_providers(Mod) ->
     #{providers := Providers} = Cfg = config(Mod),
     ProviderConfigurationOpts = maps:get(provider_configuration_opts, Cfg, #{}),
+    ok = validate_provider_configuration_opts(ProviderConfigurationOpts),
     maps:foreach(
         fun(Name, #{issuer := Issuer}) ->
             WorkerName = provider_worker_name(Mod, Name),
@@ -156,3 +167,15 @@ ensure_providers(Mod) ->
         end,
         Providers
     ).
+
+%% A typo'd or misnested provider_configuration_opts (e.g.
+%% provider_config_opts, or {ssl, _} one level too high) would otherwise
+%% just fail to apply - maps:get/3's default and oidcc's own permissive
+%% defaults mean nothing errors, nothing logs, and the trust pinning
+%% silently doesn't happen. Fail loud instead.
+-spec validate_provider_configuration_opts(map()) -> ok.
+validate_provider_configuration_opts(Opts) ->
+    case maps:keys(Opts) -- [fallback_expiry, request_opts, quirks] of
+        [] -> ok;
+        Unknown -> error({unknown_provider_configuration_opts, Unknown})
+    end.
