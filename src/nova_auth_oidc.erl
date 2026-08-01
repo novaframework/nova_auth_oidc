@@ -26,6 +26,20 @@ config() ->
           ~"groups" => roles
       }}.
 ```
+
+## Provider discovery/JWKS TLS options
+
+By default, each provider's `oidcc_provider_configuration_worker` fetches its
+discovery document and JWKS over `httpc`'s implicit default TLS options,
+which vary by OTP version. To pin explicit TLS options (e.g.
+`verify_peer`), set `provider_configuration_opts` in `config/0`:
+
+```erlang
+provider_configuration_opts => #{request_opts => #{ssl => my_tls_opts()}}
+```
+
+This applies to every provider `ensure_providers/1` starts; there is no
+per-provider override.
 """.
 
 -export([
@@ -56,7 +70,8 @@ config() ->
         scopes => [binary()],
         on_success => {redirect, binary()},
         on_failure => {status, integer()} | {redirect, binary()},
-        claims_mapping => #{binary() => atom()} | {module(), atom()}
+        claims_mapping => #{binary() => atom()} | {module(), atom()},
+        provider_configuration_opts => oidcc_provider_configuration:opts()
     }.
 
 -doc "Return the merged OIDC configuration for `Mod`, caching in persistent_term.".
@@ -71,7 +86,8 @@ config(Mod) ->
                 scopes => [~"openid", ~"profile", ~"email"],
                 on_success => {redirect, ~"/"},
                 on_failure => {status, 401},
-                claims_mapping => #{}
+                claims_mapping => #{},
+                provider_configuration_opts => #{}
             },
             Merged = maps:merge(Defaults, Cfg),
             persistent_term:put({nova_auth_oidc, Mod}, Merged),
@@ -121,13 +137,18 @@ Call this from your application's `start/2`. Idempotent.
 """.
 -spec ensure_providers(module()) -> ok.
 ensure_providers(Mod) ->
-    #{providers := Providers} = config(Mod),
+    #{providers := Providers} = Cfg = config(Mod),
+    ProviderConfigurationOpts = maps:get(provider_configuration_opts, Cfg, #{}),
     maps:foreach(
         fun(Name, #{issuer := Issuer}) ->
             WorkerName = provider_worker_name(Mod, Name),
             case whereis(WorkerName) of
                 undefined ->
-                    {ok, _} = nova_auth_oidc_sup:start_provider(WorkerName, Issuer),
+                    {ok, _} = nova_auth_oidc_sup:start_provider(
+                        WorkerName, Issuer, #{
+                            provider_configuration_opts => ProviderConfigurationOpts
+                        }
+                    ),
                     ok;
                 _Pid ->
                     ok

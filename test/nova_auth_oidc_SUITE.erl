@@ -12,7 +12,9 @@
     provider_config_found/1,
     provider_config_not_found/1,
     provider_worker_name_format/1,
-    redirect_uri_builds_correctly/1
+    redirect_uri_builds_correctly/1,
+    config_defaults_provider_configuration_opts_to_empty/1,
+    config_merges_user_provider_configuration_opts/1
 ]).
 
 all() ->
@@ -29,7 +31,9 @@ groups() ->
             provider_config_found,
             provider_config_not_found,
             provider_worker_name_format,
-            redirect_uri_builds_correctly
+            redirect_uri_builds_correctly,
+            config_defaults_provider_configuration_opts_to_empty,
+            config_merges_user_provider_configuration_opts
         ]}
     ].
 
@@ -95,6 +99,24 @@ redirect_uri_builds_correctly(_Config) ->
     clear_cache(),
     Uri = nova_auth_oidc:redirect_uri(test_oidc_config, authentik),
     ?assertEqual(~"https://myapp.example.com/auth/authentik/callback", Uri).
+
+config_defaults_provider_configuration_opts_to_empty(_Config) ->
+    clear_cache(),
+    Cfg = nova_auth_oidc:config(test_oidc_config),
+    ?assertEqual(#{}, maps:get(provider_configuration_opts, Cfg)).
+
+config_merges_user_provider_configuration_opts(_Config) ->
+    _ =
+        (try
+            persistent_term:erase({nova_auth_oidc, test_oidc_config_tls})
+        catch
+            _:_ -> ok
+        end),
+    Cfg = nova_auth_oidc:config(test_oidc_config_tls),
+    ?assertEqual(
+        #{request_opts => #{ssl => [verify_peer]}},
+        maps:get(provider_configuration_opts, Cfg)
+    ).
 
 %%----------------------------------------------------------------------
 %% Internal
