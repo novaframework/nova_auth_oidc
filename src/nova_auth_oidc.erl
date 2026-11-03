@@ -84,7 +84,13 @@ per-provider override.
         provider_configuration_opts => oidcc_provider_configuration:opts()
     }.
 
--doc "Return the merged OIDC configuration for `Mod`, caching in persistent_term.".
+-doc """
+Return the merged OIDC configuration for `Mod`, caching in persistent_term.
+
+`on_failure` must be `{status, Code}` with an HTTP status code or
+`{redirect, Url}`; anything else raises `error({invalid_on_failure, Value})`
+on the first call.
+""".
 -spec config(module()) -> map().
 config(Mod) ->
     case persistent_term:get({nova_auth_oidc, Mod}, undefined) of
@@ -100,6 +106,7 @@ config(Mod) ->
                 provider_configuration_opts => #{}
             },
             Merged = maps:merge(Defaults, Cfg),
+            ok = check_on_failure(maps:get(on_failure, Merged)),
             persistent_term:put({nova_auth_oidc, Mod}, Merged),
             Merged;
         Cfg when is_map(Cfg) ->
@@ -179,3 +186,12 @@ validate_provider_configuration_opts(Opts) ->
         [] -> ok;
         Unknown -> error({unknown_provider_configuration_opts, Unknown})
     end.
+
+check_on_failure({status, Code}) when is_integer(Code), Code >= 100, Code =< 599 ->
+    ok;
+check_on_failure({redirect, Url}) when is_binary(Url), byte_size(Url) > 0 ->
+    ok;
+check_on_failure({redirect, [_ | _] = Url}) when is_list(Url) ->
+    ok;
+check_on_failure(Other) ->
+    error({invalid_on_failure, Other}).

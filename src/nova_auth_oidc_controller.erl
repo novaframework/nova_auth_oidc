@@ -219,11 +219,7 @@ retrieve_token_and_userinfo(WorkerName, ClientId, ClientSecret, Code, TokenOpts)
 
 handle_failure(AuthMod, Reason) ->
     ?LOG_WARNING(#{msg => ~"nova_auth_oidc authentication failed", reason => reason_tag(Reason)}),
-    case nova_auth_oidc:config(AuthMod, on_failure) of
-        {status, Code} -> {status, Code};
-        {redirect, Url} -> {redirect, Url};
-        _ -> {status, 401}
-    end.
+    nova_auth_oidc:config(AuthMod, on_failure).
 
 %% oidcc reasons can carry tokens or claims (e.g. {none_alg_used, Token}),
 %% so only the tag is logged.

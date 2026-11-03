@@ -9,6 +9,7 @@
     config_caches_in_persistent_term/1,
     config_key_lookup/1,
     invalidate_cache_clears/1,
+    invalid_on_failure_raises/1,
     provider_config_found/1,
     provider_config_not_found/1,
     provider_worker_name_format/1,
@@ -29,6 +30,7 @@ groups() ->
             config_caches_in_persistent_term,
             config_key_lookup,
             invalidate_cache_clears,
+            invalid_on_failure_raises,
             provider_config_found,
             provider_config_not_found,
             provider_worker_name_format,
@@ -87,6 +89,15 @@ invalidate_cache_clears(_Config) ->
     _ = nova_auth_oidc:config(test_oidc_config),
     nova_auth_oidc:invalidate_cache(test_oidc_config),
     ?assertEqual(undefined, persistent_term:get({nova_auth_oidc, test_oidc_config}, undefined)).
+
+invalid_on_failure_raises(_Config) ->
+    nova_auth_oidc:invalidate_cache(test_oidc_config_bad_failure),
+    ?assertError(
+        {invalid_on_failure, {status, ~"401"}}, nova_auth_oidc:config(test_oidc_config_bad_failure)
+    ),
+    ?assertEqual(
+        undefined, persistent_term:get({nova_auth_oidc, test_oidc_config_bad_failure}, undefined)
+    ).
 
 provider_config_found(_Config) ->
     clear_cache(),
