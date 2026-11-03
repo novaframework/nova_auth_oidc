@@ -87,10 +87,11 @@ routes(_Env) ->
 3. User authenticates at Authentik
 4. Authentik redirects to `/auth/authentik/callback?code=...&state=...`
 5. Controller checks that `state` matches the session and that the session
-   holds the nonce for this provider, then exchanges the code for tokens via
-   `oidcc`. Otherwise it answers with `on_failure` (401 by default) and
-   deletes the login state, so it cannot be retried
-6. Controller retrieves userinfo from provider
+   holds the nonce for this provider. Otherwise it answers with `on_failure`
+   (401 by default). Either way it deletes the login state before going on,
+   so a replayed or concurrent callback with the same `state` fails
+6. Controller exchanges the code for tokens via `oidcc` and retrieves
+   userinfo from the provider; if either fails, the reply is `on_failure`
 7. Claims are mapped to an actor via `nova_auth_claims`
 8. The session is renewed: the old session (and its id) is deleted and the
    client gets a new session id, so an id planted before login is worthless

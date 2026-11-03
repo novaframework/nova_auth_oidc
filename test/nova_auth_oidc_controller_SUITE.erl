@@ -16,7 +16,8 @@
     callback_wrong_state_is_401_and_single_use/1,
     callback_other_provider_is_401/1,
     callback_provider_error_is_401_and_single_use/1,
-    callback_state_consumed_before_exchange/1
+    callback_state_consumed_before_exchange/1,
+    callback_userinfo_error_is_401/1
 ]).
 
 -define(OLD_ID, ~"planted-session-id").
@@ -37,7 +38,8 @@ all() ->
         callback_wrong_state_is_401_and_single_use,
         callback_other_provider_is_401,
         callback_provider_error_is_401_and_single_use,
-        callback_state_consumed_before_exchange
+        callback_state_consumed_before_exchange,
+        callback_userinfo_error_is_401
     ].
 
 init_per_suite(Config) ->
@@ -181,6 +183,27 @@ callback_state_consumed_before_exchange(_Config) ->
     ?assertEqual(1, meck:num_calls(oidcc, retrieve_token, '_')),
     ?assertMatch({ok, #{id := ~"user-1"}}, nova_auth_actor:fetch(Req1)),
     ?assertEqual({status, 401}, nova_auth_oidc_controller:callback(req())).
+
+callback_userinfo_error_is_401(_Config) ->
+    ok = meck:expect(oidcc, retrieve_userinfo, fun(_, _, _, _, _) ->
+        {error, {http_error, 500, ~"userinfo-body"}}
+    end),
+    ok = test_log_capture:start(),
+    try
+        ?assertEqual({status, 401}, nova_auth_oidc_controller:callback(req())),
+        ?assertMatch(
+            [#{msg := {report, #{reason := userinfo}}}],
+            [
+                E
+             || #{msg := {report, #{msg := ~"nova_auth_oidc authentication failed"}}} = E <-
+                    test_log_capture:events()
+            ]
+        )
+    after
+        test_log_capture:stop()
+    end,
+    ?assertEqual([], test_session_backend:keys(?OLD_ID)),
+    ?assertEqual({error, not_found}, nova_auth_actor:fetch(req())).
 
 callback(Req) ->
     case nova_auth_oidc_controller:callback(Req) of

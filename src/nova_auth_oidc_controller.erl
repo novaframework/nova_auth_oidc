@@ -89,9 +89,9 @@ mapping, renews the session, stores the actor in the new session, and
 redirects to the configured success URL.
 
 An unknown `:provider` gets a 404. A callback that cannot be tied to the
-session (no or wrong `state`, no nonce, other provider) or that the
-provider rejects is an authentication failure and gets the configured
-`on_failure` response (401 by default).
+session (no or wrong `state`, no nonce, other provider), that the provider
+rejects, or whose user info cannot be retrieved is an authentication
+failure and gets the configured `on_failure` response (401 by default).
 The login's state, nonce and PKCE verifier are single-use: they are
 deleted as soon as the `state` matches, before the code exchange, so a
 replayed or concurrent callback with the same `state` fails.
@@ -221,8 +221,8 @@ retrieve_token_and_userinfo(WorkerName, ClientId, ClientSecret, Code, TokenOpts)
             case oidcc:retrieve_userinfo(Token, WorkerName, ClientId, ClientSecret, #{}) of
                 {ok, Userinfo} ->
                     {ok, Token, Userinfo};
-                {error, _} ->
-                    {ok, Token, #{}}
+                {error, Reason} ->
+                    {error, {userinfo, Reason}}
             end;
         {error, Reason} ->
             {error, Reason}
