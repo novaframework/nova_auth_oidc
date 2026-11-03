@@ -6,6 +6,7 @@
 -export([
     callback_renews_session/1,
     callback_planted_session_stays_anonymous/1,
+    failure_log_has_no_token/1,
     login_unknown_provider_is_404/1,
     callback_unknown_provider_is_404/1,
     login_stores_state_and_sends_it/1,
@@ -24,6 +25,7 @@ all() ->
     [
         callback_renews_session,
         callback_planted_session_stays_anonymous,
+        failure_log_has_no_token,
         login_unknown_provider_is_404,
         callback_unknown_provider_is_404,
         login_stores_state_and_sends_it,
@@ -75,6 +77,27 @@ callback_renews_session(_Config) ->
 callback_planted_session_stays_anonymous(_Config) ->
     {_, _} = callback(req()),
     ?assertEqual({error, not_found}, nova_auth_actor:fetch(req())).
+
+failure_log_has_no_token(_Config) ->
+    Token = ~"eyJhbGciOiJub25lIn0.secret-token-payload.",
+    ok = meck:expect(oidcc, retrieve_token, fun(_, _, _, _, _) ->
+        {error, {none_alg_used, Token}}
+    end),
+    ok = test_log_capture:start(),
+    try
+        ?assertEqual({status, 401}, nova_auth_oidc_controller:callback(req())),
+        Events = test_log_capture:events(),
+        ?assertMatch(
+            [#{msg := {report, #{reason := none_alg_used}}}],
+            [
+                E
+             || #{msg := {report, #{msg := ~"nova_auth_oidc authentication failed"}}} = E <- Events
+            ]
+        ),
+        ?assertEqual(nomatch, binary:match(term_to_binary(Events), ~"secret-token-payload"))
+    after
+        test_log_capture:stop()
+    end.
 
 login_unknown_provider_is_404(_Config) ->
     Req = (req())#{bindings => #{provider => ?UNKNOWN_PROVIDER}},
