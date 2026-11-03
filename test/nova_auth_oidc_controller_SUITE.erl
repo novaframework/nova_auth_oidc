@@ -6,7 +6,6 @@
 -export([
     callback_renews_session/1,
     callback_planted_session_stays_anonymous/1,
-    callback_sets_flagged_cookie/1,
     login_unknown_provider_is_404/1,
     callback_unknown_provider_is_404/1,
     login_stores_state_and_sends_it/1,
@@ -25,7 +24,6 @@ all() ->
     [
         callback_renews_session,
         callback_planted_session_stays_anonymous,
-        callback_sets_flagged_cookie,
         login_unknown_provider_is_404,
         callback_unknown_provider_is_404,
         login_stores_state_and_sends_it,
@@ -77,22 +75,6 @@ callback_renews_session(_Config) ->
 callback_planted_session_stays_anonymous(_Config) ->
     {_, _} = callback(req()),
     ?assertEqual({error, not_found}, nova_auth_actor:fetch(req())).
-
-callback_sets_flagged_cookie(_Config) ->
-    case nova_has_renew() of
-        true ->
-            {skip, ~"nova_session:renew/1 writes the cookie in nova_stream_h"};
-        false ->
-            {_, #{nova_session_id := NewId} = Req1} = callback(req()),
-            Cookie = set_cookie(Req1),
-            ?assertMatch(<<"session_id=", _/binary>>, Cookie),
-            [<<"session_id=", Value/binary>> | _] = binary:split(Cookie, ~";"),
-            ?assertEqual(NewId, Value),
-            [
-                ?assertNotEqual(nomatch, string:find(Cookie, Flag))
-             || Flag <- [~"; Path=/", ~"; HttpOnly", ~"; SameSite=Lax", ~"; Secure"]
-            ]
-    end.
 
 login_unknown_provider_is_404(_Config) ->
     Req = (req())#{bindings => #{provider => ?UNKNOWN_PROVIDER}},
@@ -148,11 +130,6 @@ callback(Req) ->
         {redirect, Path, #{} = Req1} -> {Path, Req1}
     end.
 
-%% cowboy_req keeps response cookies as untyped iodata.
--spec set_cookie(dynamic()) -> binary().
-set_cookie(#{resp_cookies := #{~"session_id" := Cookie}}) ->
-    iolist_to_binary(Cookie).
-
 req() ->
     #{
         bindings => #{provider => ~"authentik"},
@@ -163,7 +140,3 @@ req() ->
         headers => #{},
         resp_cookies => #{}
     }.
-
-nova_has_renew() ->
-    _ = code:ensure_loaded(nova_session),
-    erlang:function_exported(nova_session, renew, 1).

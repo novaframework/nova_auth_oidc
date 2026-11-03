@@ -98,12 +98,6 @@ routes(_Env) ->
 9. Actor is stored in the new session via `nova_auth_actor`
 10. User is redirected to the success URL
 
-Renewal uses `nova_session:renew(Req)` on Nova releases that have it. On
-older releases the callback sets the new `session_id` cookie itself, with
-`Path=/`, `HttpOnly`, `SameSite=Lax`, and `Secure` on HTTPS requests; set
-`{nova, [{session_cookie_opts, #{secure => true}}]}` behind a proxy that
-terminates TLS.
-
 From this point, `nova_auth_security:require_authenticated()` works for all
 protected routes.
 
