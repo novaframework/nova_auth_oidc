@@ -3,7 +3,7 @@
 OpenID Connect authentication for [Nova](https://github.com/novaframework/nova) web applications.
 
 Provides OIDC login flows, JWT bearer validation, token introspection, and
-client credentials (M2M) -- all integrated with [nova_auth](https://github.com/Taure/nova_auth)'s
+client credentials (M2M) -- all integrated with [nova_auth](https://github.com/novaframework/nova_auth)'s
 unified actor session.
 
 ## Features
@@ -12,10 +12,19 @@ unified actor session.
 - **JWT bearer validation** -- protect API routes with provider-issued JWTs
 - **Token introspection** -- check revocation status (RFC 7662)
 - **Client credentials** -- machine-to-machine tokens with caching
-- **Claims mapping** -- transform provider claims to actor maps via [nova_auth_claims](https://github.com/Taure/nova_auth)
+- **Claims mapping** -- transform provider claims to actor maps via [nova_auth_claims](https://github.com/novaframework/nova_auth)
 - **Nova integration** -- security callbacks, plugins, route protection
 
 ## Quick Start
+
+Add the package from [Hex](https://hex.pm/packages/nova_auth_oidc); it pulls in
+`nova_auth` and `oidcc`:
+
+```erlang
+{deps, [
+    {nova_auth_oidc, "~> 0.2"}
+]}.
+```
 
 ```erlang
 %% 1. Define your OIDC config
@@ -79,8 +88,17 @@ routes(_Env) ->
 5. Controller exchanges code for tokens via `oidcc`
 6. Controller retrieves userinfo from provider
 7. Claims are mapped to an actor via `nova_auth_claims`
-8. Actor is stored in session via `nova_auth_actor`
-9. User is redirected to the success URL
+8. The session is renewed: the old session (and its id) is deleted and the
+   client gets a new session id, so an id planted before login is worthless
+   (session fixation)
+9. Actor is stored in the new session via `nova_auth_actor`
+10. User is redirected to the success URL
+
+Renewal uses `nova_session:renew(Req)` on Nova releases that have it. On
+older releases the callback sets the new `session_id` cookie itself, with
+`Path=/`, `HttpOnly`, `SameSite=Lax`, and `Secure` on HTTPS requests; set
+`{nova, [{session_cookie_opts, #{secure => true}}]}` behind a proxy that
+terminates TLS.
 
 From this point, `nova_auth_security:require_authenticated()` works for all
 protected routes.
@@ -95,7 +113,7 @@ protected routes.
 
 ## Dependencies
 
-- [nova_auth](https://github.com/Taure/nova_auth) -- unified actor session, claims mapping, policies
+- [nova_auth](https://github.com/novaframework/nova_auth) -- unified actor session, claims mapping, policies
 - [oidcc](https://github.com/erlef/oidcc) -- ERLEF OpenID Connect Certified client
 - [nova](https://github.com/novaframework/nova) -- web framework
 
@@ -105,4 +123,4 @@ protected routes.
 
 ## License
 
-MIT
+Apache-2.0

@@ -6,7 +6,7 @@ Add `nova_auth_oidc` to your `rebar.config` dependencies:
 
 ```erlang
 {deps, [
-    {nova_auth_oidc, {git, "https://github.com/Taure/nova_auth_oidc.git", {branch, "main"}}}
+    {nova_auth_oidc, "~> 0.2"}
 ]}.
 ```
 
