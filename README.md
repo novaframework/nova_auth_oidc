@@ -22,7 +22,7 @@ Add the package from [Hex](https://hex.pm/packages/nova_auth_oidc); it pulls in
 
 ```erlang
 {deps, [
-    {nova_auth_oidc, "~> 0.2"}
+    {nova_auth_oidc, "~> 0.3.0"}
 ]}.
 ```
 
