@@ -1,5 +1,6 @@
 -module(nova_auth_oidc_jwt_tests).
 -include_lib("eunit/include/eunit.hrl").
+-include_lib("oidcc/include/oidcc_provider_configuration.hrl").
 
 %% Standard-claim validation: exp -> sub -> iss -> aud -> azp. Provider
 %% config comes from test_oidc_config (authentik: issuer
@@ -100,9 +101,20 @@ setup() ->
     %% would let a renamed/removed get_jwks/1 pass silently instead of
     %% failing the meck:expect below.
     meck:new(oidcc_provider_configuration_worker, [passthrough]),
+    meck:expect(oidcc_provider_configuration_worker, get_provider_configuration, fun(_) ->
+        #oidcc_provider_configuration{
+            issuer = ?ISS,
+            authorization_endpoint = ?ISS,
+            response_types_supported = [~"code"],
+            subject_types_supported = [public],
+            id_token_signing_alg_values_supported = [~"RS256"]
+        }
+    end),
+    ok = nova_auth_oidc_jwt:init_refresh_table(),
     ok.
 
 cleanup(_) ->
+    true = ets:delete(nova_auth_oidc_jwks_refresh),
     meck:unload(oidcc_provider_configuration_worker).
 
 validate_token_test_() ->
@@ -117,7 +129,15 @@ validate_token_test_() ->
         {"an RSA public key replayed as an HMAC secret (alg confusion) is rejected",
             fun hmac_alg_confusion_rejected/0},
         {"a signature-valid token with an expired exp is still rejected by validate_token/3",
-            fun signature_valid_but_expired_claims_rejected/0}
+            fun signature_valid_but_expired_claims_rejected/0},
+        {"a token without iat is rejected", fun missing_iat_rejected/0},
+        {"a token whose nbf is in the future is rejected", fun not_yet_valid_rejected/0},
+        {"a non-numeric exp in a signed token is rejected, not a crash",
+            fun non_numeric_exp_in_signed_token_rejected/0},
+        {"an unknown kid refetches the JWKS and validates against the new key",
+            fun unknown_kid_refreshes_jwks/0},
+        {"unknown-kid refetches are limited per provider",
+            fun unknown_kid_refresh_is_rate_limited/0}
     ]}.
 
 signed_token_validates() ->
@@ -194,7 +214,82 @@ signature_valid_but_expired_claims_rejected() ->
         nova_auth_oidc_jwt:validate_token(test_oidc_config, authentik, Token)
     ).
 
+missing_iat_rejected() ->
+    Priv = rsa_key(),
+    mock_jwks(jwks_of([Priv])),
+    Token = sign_rs256(Priv, maps:remove(~"iat", claims())),
+    ?assertEqual(
+        {error, missing_iat},
+        nova_auth_oidc_jwt:validate_token(test_oidc_config, authentik, Token)
+    ).
+
+not_yet_valid_rejected() ->
+    Priv = rsa_key(),
+    mock_jwks(jwks_of([Priv])),
+    Token = sign_rs256(Priv, (claims())#{~"nbf" => future()}),
+    ?assertEqual(
+        {error, token_not_yet_valid},
+        nova_auth_oidc_jwt:validate_token(test_oidc_config, authentik, Token)
+    ).
+
+non_numeric_exp_in_signed_token_rejected() ->
+    Priv = rsa_key(),
+    mock_jwks(jwks_of([Priv])),
+    Token = sign_rs256(Priv, (claims())#{~"exp" => ~"tomorrow"}),
+    ?assertEqual(
+        {error, invalid_claims},
+        nova_auth_oidc_jwt:validate_token(test_oidc_config, authentik, Token)
+    ).
+
+unknown_kid_refreshes_jwks() ->
+    Old = with_kid(rsa_key(), ~"old-key"),
+    New = with_kid(rsa_key(), ~"new-key"),
+    mock_rotation(jwks_of([Old]), jwks_of([Old, New])),
+    Token = sign_rs256(New, claims()),
+    ?assertMatch(
+        {ok, #{id := ~"user-1"}},
+        nova_auth_oidc_jwt:validate_token(test_oidc_config, authentik, Token)
+    ),
+    ?assertEqual(
+        1, meck:num_calls(oidcc_provider_configuration_worker, refresh_jwks_for_unknown_kid, '_')
+    ).
+
+unknown_kid_refresh_is_rate_limited() ->
+    Known = with_kid(rsa_key(), ~"known-key"),
+    mock_rotation(jwks_of([Known]), jwks_of([Known])),
+    Tokens = [
+        sign_rs256(with_kid(rsa_key(), Kid), claims())
+     || Kid <- [~"made-up-1", ~"made-up-2"]
+    ],
+    [
+        ?assertEqual(
+            {error, invalid_signature},
+            nova_auth_oidc_jwt:validate_token(test_oidc_config, authentik, Token)
+        )
+     || Token <- Tokens
+    ],
+    ?assertEqual(
+        1, meck:num_calls(oidcc_provider_configuration_worker, refresh_jwks_for_unknown_kid, '_')
+    ).
+
 %% ---- signature-test helpers ----
+
+mock_rotation(Before, After) ->
+    Key = {?MODULE, rotated},
+    put(Key, false),
+    meck:expect(oidcc_provider_configuration_worker, get_jwks, fun(_) ->
+        case get(Key) of
+            true -> After;
+            false -> Before
+        end
+    end),
+    meck:expect(oidcc_provider_configuration_worker, refresh_jwks_for_unknown_kid, fun(_, _) ->
+        put(Key, true),
+        ok
+    end).
+
+with_kid(PrivKey, Kid) ->
+    jose_jwk:merge(PrivKey, #{~"kid" => Kid}).
 
 mock_jwks(Jwks) ->
     meck:expect(oidcc_provider_configuration_worker, get_jwks, fun(_) -> Jwks end).
@@ -208,7 +303,12 @@ jwks_of(PrivKeys) ->
 
 sign_rs256(PrivKey, Claims) ->
     Jwt = jose_jwt:from(Claims),
-    {_, Signed} = jose_jwt:sign(PrivKey, #{~"alg" => ~"RS256"}, Jwt),
+    Header =
+        case jose_jwk:to_map(PrivKey) of
+            {_, #{~"kid" := Kid}} -> #{~"alg" => ~"RS256", ~"kid" => Kid};
+            _ -> #{~"alg" => ~"RS256"}
+        end,
+    {_, Signed} = jose_jwt:sign(PrivKey, Header, Jwt),
     {_, Compact} = jose_jws:compact(Signed),
     Compact.
 
@@ -225,4 +325,10 @@ b64url(Bin) ->
     binary:replace(binary:replace(NoPad, <<"+">>, <<"-">>, [global]), <<"/">>, <<"_">>, [global]).
 
 claims() ->
-    #{~"iss" => ?ISS, ~"aud" => ?AUD, ~"sub" => ~"user-1", ~"exp" => future()}.
+    #{
+        ~"iss" => ?ISS,
+        ~"aud" => ?AUD,
+        ~"sub" => ~"user-1",
+        ~"exp" => future(),
+        ~"iat" => erlang:system_time(second)
+    }.

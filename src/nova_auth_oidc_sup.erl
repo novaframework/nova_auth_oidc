@@ -88,4 +88,5 @@ build_worker_opts(Name, Issuer, ExtraOpts) ->
 
 -doc false.
 init([]) ->
+    ok = nova_auth_oidc_jwt:init_refresh_table(),
     {ok, {#{strategy => one_for_one, intensity => 10, period => 60}, []}}.

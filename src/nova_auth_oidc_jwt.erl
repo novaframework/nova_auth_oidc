@@ -15,20 +15,14 @@ end
 ```
 """.
 
--include_lib("jose/include/jose_jwt.hrl").
+-include_lib("jose/include/jose_jwk.hrl").
+-include_lib("oidcc/include/oidcc_provider_configuration.hrl").
 -include_lib("kernel/include/logger.hrl").
 
 -export([validate_bearer/2, validate_bearer/3, validate_token/3]).
+-export([init_refresh_table/0]).
 %% Exported for tests: standard-claim validation (exp/iss/aud) in isolation.
 -export([validate_claims/3]).
-
-%% signature_error_class/1's catch-all is unreachable against
-%% oidcc_jwt_util:verify_signature/3's CURRENT error() type, and dialyzer
-%% proves it - deliberately kept anyway, since this classifier is what
-%% makes an external dependency's error terms safe to log, with no
-%% try/catch of its own to fall back on inside this module. See the
-%% function for the full reasoning.
--dialyzer({nowarn_function, signature_error_class/1}).
 
 %% ID tokens are always asymmetrically signed (the private key never
 %% leaves the IdP) - RSA and ECDSA cover every major provider (Google,
@@ -46,6 +40,9 @@ end
     ~"ES384",
     ~"ES512"
 ]).
+
+-define(REFRESH_TABLE, nova_auth_oidc_jwks_refresh).
+-define(REFRESH_INTERVAL_MS, 10_000).
 
 -doc """
 Validate a JWT bearer token from the request's Authorization header.
@@ -77,86 +74,134 @@ validate_bearer(AuthMod, Provider, Req) ->
 Validate a raw JWT binary against the provider's JWKS.
 
 Steps:
-1. Get provider configuration and JWKS from the worker
-2. Decode and verify the JWT signature
-3. Validate standard claims (exp, iss, aud)
-4. Apply claims mapping
-5. Return the actor map
+1. Build an `oidcc` client context from the provider worker's discovery
+   document and JWKS
+2. Verify the signature (RS*/ES* only) and the standard claims with
+   `oidcc_token:validate_jwt/3`: `iss` is the provider's issuer, `aud` holds
+   the client_id, `exp` is in the future, `nbf` (if present) is in the past,
+   and `iss`, `sub`, `aud`, `exp` and `iat` are present
+3. Check the configured issuer, a non-empty `sub` and `azp` (if present)
+4. Apply claims mapping and return the actor map
+
+A token whose `kid` is not in the cached JWKS makes the worker refetch the
+JWKS once, so a key the provider just rotated in is accepted. Refetches for
+unknown kids are limited to one per provider every 10 seconds, so tokens
+with made-up kids cannot make every request fetch the JWKS.
 """.
 -spec validate_token(module(), atom(), binary()) ->
     {ok, nova_auth:actor()} | {error, term()}.
 validate_token(AuthMod, Provider, Token) ->
     WorkerName = nova_auth_oidc:provider_worker_name(AuthMod, Provider),
-    case get_jwks(WorkerName) of
-        {ok, Jwks} ->
-            %% get_jwks/1 always returns a #jose_jwk{keys = {jose_jwk_set,
-            %% _}} (a provider can rotate keys, so it's always a set, even
-            %% with one key) - jose_jwt:verify/2 has no clause for a key
-            %% set, it only matches a single #jose_jwk{} with a concrete
-            %% kty, so it always raised function_clause here. oidcc's own
-            %% verify_signature/3 folds over the set, matches by `kid` when
-            %% present, and enforces the algorithm allowlist itself (also
-            %% closing off alg:none and cross-algorithm confusion).
-            case oidcc_jwt_util:verify_signature(Token, ?ALLOWED_ALGORITHMS, Jwks) of
-                {ok, {#jose_jwt{fields = Claims}, _Jws, _Jwk}} ->
+    {ok, #{client_id := ClientId}} = nova_auth_oidc:provider_config(AuthMod, Provider),
+    case client_context(WorkerName, ClientId) of
+        {ok, ClientContext} ->
+            Opts = #{
+                signing_algs => ?ALLOWED_ALGORITHMS,
+                refresh_jwks => fun(_Jwks, Kid) -> refresh_jwks(WorkerName, Kid) end
+            },
+            case validate_jwt(Token, ClientContext, Opts) of
+                {ok, Claims} ->
                     case validate_claims(AuthMod, Provider, Claims) of
-                        ok ->
-                            Actor = build_actor(AuthMod, Provider, Claims),
-                            {ok, Actor};
-                        {error, _} = Err ->
-                            Err
+                        ok -> {ok, build_actor(AuthMod, Provider, Claims)};
+                        {error, _} = Err -> Err
                     end;
                 {error, Reason} ->
-                    %% oidcc_jwt_util's error terms are its own internal
-                    %% vocabulary (no_matching_key, {no_matching_key_with_kid,
-                    %% Kid}, {none_alg_used, Jwt, Jws} - the latter two
-                    %% carrying decoded token/JWS records, i.e. attacker-
-                    %% supplied claims, straight into a Reason a consumer
-                    %% might log verbatim). Normalize at this boundary so
-                    %% this module's own public error contract
-                    %% (invalid_signature, unchanged since before this fix)
-                    %% doesn't silently change shape whenever oidcc's
-                    %% internal vocabulary does, and so nothing attacker-
-                    %% controlled crosses it.
                     ?LOG_DEBUG(#{
-                        msg => ~"jwt signature verification failed",
-                        reason_class => signature_error_class(Reason)
+                        msg => ~"jwt validation failed",
+                        reason_class => error_class(Reason)
                     }),
-                    {error, invalid_signature}
+                    {error, public_error(Reason)}
             end;
         {error, _} = Err ->
             Err
     end.
 
+-doc false.
+-spec init_refresh_table() -> ok.
+init_refresh_table() ->
+    _ = ets:new(?REFRESH_TABLE, [named_table, public, set]),
+    ok.
+
 %%----------------------------------------------------------------------
 %% Internal
 %%----------------------------------------------------------------------
 
-get_jwks(WorkerName) ->
+client_context(WorkerName, ClientId) ->
     try
-        {ok, oidcc_provider_configuration_worker:get_jwks(WorkerName)}
+        {
+            oidcc_provider_configuration_worker:get_provider_configuration(WorkerName),
+            oidcc_provider_configuration_worker:get_jwks(WorkerName)
+        }
+    of
+        {#oidcc_provider_configuration{} = Configuration, #jose_jwk{} = Jwks} ->
+            %% Bearer tokens are verified with the provider's public keys
+            %% only; an unauthenticated context keeps the client secret out
+            %% of the key set.
+            {ok, oidcc_client_context:from_manual(Configuration, Jwks, ClientId, unauthenticated)};
+        _ ->
+            {error, provider_not_available}
     catch
         _:_ -> {error, provider_not_available}
     end.
 
-%% Classify oidcc_jwt_util:verify_signature/3's error term into a bare
-%% atom for logging - two of its variants ({none_alg_used, Jwt, Jws})
-%% carry decoded token/JWS records, i.e. attacker-supplied claims;
-%% logging Reason verbatim would put those in the log.
-signature_error_class({no_matching_key_with_kid, _Kid}) -> no_matching_key_with_kid;
-signature_error_class({none_alg_used, _Jwt, _Jws}) -> none_alg_used;
-signature_error_class(Reason) when is_atom(Reason) -> Reason;
-%% Dialyzer proves this is unreachable against oidcc_jwt_util's CURRENT
-%% error() type - deliberately kept anyway. validate_token/3 has no
-%% try/catch of its own in this module (unlike a caller such as
-%% asobi_oauth_controller, which wraps the whole call), so if a future
-%% oidcc version added an error variant this function doesn't recognize,
-%% removing this clause would mean THIS classifier - the thing meant to
-%% make an external dependency's behavior safe to log - is what crashes
-%% validate_token/3 uncaught. That is the exact bug class this whole fix
-%% exists to close, one level deeper. See the -dialyzer attribute at the
-%% top of this module.
-signature_error_class(_Other) -> unknown.
+%% oidcc compares exp and nbf arithmetically and raises on a non-numeric
+%% value, which only a token the provider itself signed can carry.
+validate_jwt(Token, ClientContext, Opts) ->
+    try
+        oidcc_token:validate_jwt(Token, ClientContext, Opts)
+    catch
+        error:badarith -> {error, invalid_claims}
+    end.
+
+refresh_jwks(WorkerName, Kid) ->
+    case refresh_allowed(WorkerName) of
+        true ->
+            try
+                ok = oidcc_provider_configuration_worker:refresh_jwks_for_unknown_kid(
+                    WorkerName, Kid
+                ),
+                oidcc_provider_configuration_worker:get_jwks(WorkerName)
+            of
+                #jose_jwk{} = Jwks -> {ok, Jwks};
+                _ -> {error, provider_not_available}
+            catch
+                _:_ -> {error, provider_not_available}
+            end;
+        false ->
+            {error, jwks_refresh_limited}
+    end.
+
+refresh_allowed(WorkerName) ->
+    Now = erlang:monotonic_time(millisecond),
+    try ets:lookup(?REFRESH_TABLE, WorkerName) of
+        [{_, Last}] when Now - Last < ?REFRESH_INTERVAL_MS ->
+            false;
+        _ ->
+            true = ets:insert(?REFRESH_TABLE, {WorkerName, Now}),
+            true
+    catch
+        error:badarg -> false
+    end.
+
+%% oidcc's error terms can carry the token's claims, so callers get a fixed
+%% atom and the log gets only the tag.
+public_error(token_expired) -> token_expired;
+public_error(token_not_yet_valid) -> token_not_yet_valid;
+public_error(invalid_claims) -> invalid_claims;
+public_error({missing_claim, ~"exp", _}) -> missing_exp;
+public_error({missing_claim, ~"iat", _}) -> missing_iat;
+public_error({missing_claim, ~"sub", _}) -> missing_sub;
+public_error({missing_claim, ~"iss", _}) -> invalid_issuer;
+public_error({missing_claim, ~"aud", _}) -> invalid_audience;
+public_error({missing_claim, {~"iss", _}, _}) -> invalid_issuer;
+public_error({missing_claim, {~"aud", _}, _}) -> invalid_audience;
+public_error(_Reason) -> invalid_signature.
+
+error_class(Reason) when is_atom(Reason) -> Reason;
+error_class(Reason) when is_tuple(Reason), tuple_size(Reason) > 0, is_atom(element(1, Reason)) ->
+    element(1, Reason);
+error_class(_Reason) ->
+    unknown.
 
 validate_claims(AuthMod, Provider, Claims) ->
     Now = erlang:system_time(second),
