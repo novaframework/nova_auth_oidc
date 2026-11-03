@@ -15,7 +15,8 @@
     callback_missing_state_is_401/1,
     callback_wrong_state_is_401_and_single_use/1,
     callback_other_provider_is_401/1,
-    callback_provider_error_is_401_and_single_use/1
+    callback_provider_error_is_401_and_single_use/1,
+    callback_state_consumed_before_exchange/1
 ]).
 
 -define(OLD_ID, ~"planted-session-id").
@@ -35,7 +36,8 @@ all() ->
         callback_missing_state_is_401,
         callback_wrong_state_is_401_and_single_use,
         callback_other_provider_is_401,
-        callback_provider_error_is_401_and_single_use
+        callback_provider_error_is_401_and_single_use,
+        callback_state_consumed_before_exchange
     ].
 
 init_per_suite(Config) ->
@@ -156,6 +158,29 @@ callback_provider_error_is_401_and_single_use(_Config) ->
     ?assertEqual({status, 401}, nova_auth_oidc_controller:callback(req())),
     ?assertEqual([], test_session_backend:keys(?OLD_ID)),
     ?assertEqual({error, not_found}, nova_auth_actor:fetch(req())).
+
+callback_state_consumed_before_exchange(_Config) ->
+    Self = self(),
+    ok = meck:expect(oidcc, retrieve_token, fun(_, _, _, _, _) ->
+        case get(replayed) of
+            undefined ->
+                put(replayed, true),
+                Self ! {replay, nova_auth_oidc_controller:callback(req())},
+                {ok, token};
+            true ->
+                {ok, token}
+        end
+    end),
+    {~"/", Req1} = callback(req()),
+    Replay =
+        receive
+            {replay, Result} -> Result
+        after 0 -> no_replay
+        end,
+    ?assertEqual({status, 401}, Replay),
+    ?assertEqual(1, meck:num_calls(oidcc, retrieve_token, '_')),
+    ?assertMatch({ok, #{id := ~"user-1"}}, nova_auth_actor:fetch(Req1)),
+    ?assertEqual({status, 401}, nova_auth_oidc_controller:callback(req())).
 
 callback(Req) ->
     case nova_auth_oidc_controller:callback(Req) of

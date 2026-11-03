@@ -108,12 +108,18 @@ During the OIDC flow, temporary state is stored in the Nova session:
 | `oidc_provider` | Login to callback | Provider name |
 | `nova_auth_actor` | After callback | Mapped actor (permanent session) |
 
-The temporary keys are single-use: a successful callback replaces the whole
-session (see session renewal in the README), and a failed one deletes them.
+The temporary keys are single-use: the callback deletes them as soon as the
+`state` matches, before it exchanges the code, and a successful callback
+then replaces the whole session (see session renewal in the README). A
+failed callback deletes them too.
 A callback without a matching `state`, without a stored nonce, or for a
 different provider than the login started with is an authentication
 failure and gets `on_failure`. An unknown `:provider` in the login or
 callback path gets a 404.
+
+A failure to retrieve user info after the code exchange is an
+authentication failure as well and gets `on_failure`; the callback does not
+sign in an actor without claims.
 
 A session holds one login at a time. Starting a login in a second tab
 overwrites the first tab's state and nonce, so the first tab's callback

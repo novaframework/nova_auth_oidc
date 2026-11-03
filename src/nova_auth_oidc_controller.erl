@@ -91,8 +91,10 @@ redirects to the configured success URL.
 An unknown `:provider` gets a 404. A callback that cannot be tied to the
 session (no or wrong `state`, no nonce, other provider) or that the
 provider rejects is an authentication failure and gets the configured
-`on_failure` response (401 by default). The login's state, nonce and PKCE
-verifier are single-use: a failed callback deletes them.
+`on_failure` response (401 by default).
+The login's state, nonce and PKCE verifier are single-use: they are
+deleted as soon as the `state` matches, before the code exchange, so a
+replayed or concurrent callback with the same `state` fails.
 """.
 -spec callback(map()) -> term().
 callback(#{bindings := #{provider := ProviderBin}} = Req) ->
@@ -102,6 +104,7 @@ callback(#{bindings := #{provider := ProviderBin}} = Req) ->
             QsList = cowboy_req:parse_qs(Req),
             case check_login_session(Req, ProviderBin, QsList) of
                 {ok, Nonce, PkceVerifier} ->
+                    ok = consume_login_session(Req),
                     case proplists:get_value(~"code", QsList) of
                         Code when is_binary(Code) ->
                             handle_code(
@@ -168,8 +171,12 @@ same_secret(_Expected, _Given) ->
     false.
 
 fail_callback(Req, AuthMod, Reason) ->
-    _ = [nova_session:delete(Req, Key) || Key <- login_session_keys()],
+    ok = consume_login_session(Req),
     handle_failure(AuthMod, Reason).
+
+consume_login_session(Req) ->
+    _ = [nova_session:delete(Req, Key) || Key <- login_session_keys()],
+    ok.
 
 login_session_keys() ->
     [~"oidc_state", ~"oidc_nonce", ~"oidc_pkce", ~"oidc_provider"].
