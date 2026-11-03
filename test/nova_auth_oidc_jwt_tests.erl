@@ -138,6 +138,8 @@ validate_token_test_() ->
             fun unknown_kid_refreshes_jwks/0},
         {"unknown-kid refetches are limited per provider",
             fun unknown_kid_refresh_is_rate_limited/0},
+        {"concurrent unknown-kid tokens refetch the JWKS once",
+            {timeout, 60, fun concurrent_unknown_kids_refresh_once/0}},
         {"malformed tokens are invalid_signature, not a crash", fun malformed_tokens_rejected/0},
         {"a malformed bearer token gets a 401", fun malformed_bearer_is_unauthorized/0}
     ]}.
@@ -273,6 +275,41 @@ unknown_kid_refresh_is_rate_limited() ->
     ?assertEqual(
         1, meck:num_calls(oidcc_provider_configuration_worker, refresh_jwks_for_unknown_kid, '_')
     ).
+
+concurrent_unknown_kids_refresh_once() ->
+    Known = with_kid(rsa_key(), ~"known-key"),
+    mock_jwks(jwks_of([Known])),
+    meck:expect(oidcc_provider_configuration_worker, refresh_jwks_for_unknown_kid, fun(_, _) ->
+        ok
+    end),
+    Token = sign_rs256(with_kid(rsa_key(), ~"made-up"), claims()),
+    Refetches = [unknown_kid_burst(Token, 2000) || _ <- lists:seq(1, 10)],
+    ?assertEqual(lists:duplicate(10, 1), Refetches).
+
+unknown_kid_burst(Token, N) ->
+    true = ets:delete_all_objects(nova_auth_oidc_jwks_refresh),
+    meck:reset(oidcc_provider_configuration_worker),
+    Self = self(),
+    Go = make_ref(),
+    Pids = [
+        spawn_link(fun() ->
+            receive
+                Go -> ok
+            end,
+            Self ! {self(), nova_auth_oidc_jwt:validate_token(test_oidc_config, authentik, Token)}
+        end)
+     || _ <- lists:seq(1, N)
+    ],
+    _ = [Pid ! Go || Pid <- Pids],
+    Results = [
+        receive
+            {Pid, Result} -> Result
+        after 30000 -> error(timeout)
+        end
+     || Pid <- Pids
+    ],
+    ?assertEqual([{error, invalid_signature}], lists:usort(Results)),
+    meck:num_calls(oidcc_provider_configuration_worker, refresh_jwks_for_unknown_kid, '_').
 
 malformed_tokens_rejected() ->
     mock_jwks(jwks_of([rsa_key()])),

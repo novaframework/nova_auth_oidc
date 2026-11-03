@@ -173,14 +173,16 @@ refresh_jwks(WorkerName, Kid) ->
             {error, jwks_refresh_limited}
     end.
 
+%% Claim the slot atomically: of concurrent callers only the one whose
+%% insert_new or select_replace writes the row gets to refetch.
 refresh_allowed(WorkerName) ->
     Now = erlang:monotonic_time(millisecond),
-    try ets:lookup(?REFRESH_TABLE, WorkerName) of
-        [{_, Last}] when Now - Last < ?REFRESH_INTERVAL_MS ->
-            false;
-        _ ->
-            true = ets:insert(?REFRESH_TABLE, {WorkerName, Now}),
-            true
+    Due = [
+        {{WorkerName, '$1'}, [{'=<', '$1', Now - ?REFRESH_INTERVAL_MS}], [{{WorkerName, Now}}]}
+    ],
+    try
+        ets:insert_new(?REFRESH_TABLE, {WorkerName, Now}) orelse
+            ets:select_replace(?REFRESH_TABLE, Due) =:= 1
     catch
         error:badarg -> false
     end.
