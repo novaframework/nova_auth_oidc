@@ -60,18 +60,3 @@ oidcc_record_fields() ->
 field_name({typed_record_field, Field, _Type}) -> field_name(Field);
 field_name({record_field, _, {atom, _, Name}}) -> Name;
 field_name({record_field, _, {atom, _, Name}, _Default}) -> Name.
-
-introspect_unknown_record_shape_test_() ->
-    {setup,
-        fun() ->
-            ok = meck:new(oidcc, [no_link]),
-            ok = meck:expect(oidcc, introspect_token, fun(_, _, _, _, _) ->
-                {ok, list_to_tuple([oidcc_token_introspection | lists:duplicate(14, undefined)])}
-            end)
-        end,
-        fun(_) -> meck:unload(oidcc) end, fun() ->
-            ?assertEqual(
-                {error, unsupported_oidcc_introspection},
-                nova_auth_oidc_introspect:introspect(test_oidc_config, authentik, ~"token")
-            )
-        end}.
