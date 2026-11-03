@@ -33,6 +33,10 @@ and redirects the user to the provider. An unknown `:provider` gets a 404.
 If the authorization URL cannot be built (provider unreachable,
 discovery not loaded, bad provider config) the reply is a 502; that is a
 server-side fault, so `on_failure` is not used and cannot loop back here.
+
+Each login overwrites the session's state, nonce and PKCE verifier, so
+when a user starts a second login (another tab) before finishing the
+first, the first tab's callback fails with `on_failure`.
 """.
 -spec login(map()) -> term().
 login(#{bindings := #{provider := ProviderBin}} = Req) ->

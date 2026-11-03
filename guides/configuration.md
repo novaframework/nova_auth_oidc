@@ -13,9 +13,15 @@ defaults and cached in `persistent_term`.
 | `auth_path_prefix` | `binary()` | `~"/auth"` | URL prefix for auth routes |
 | `scopes` | `[binary()]` | `[~"openid", ~"profile", ~"email"]` | Default OIDC scopes |
 | `on_success` | `{redirect, binary()}` | `{redirect, ~"/"}` | Action after successful auth |
-| `on_failure` | `{status, integer()} \| {redirect, binary()}` | `{status, 401}` | Action on auth failure |
+| `on_failure` | `{status, 100..599} \| {redirect, binary()}` | `{status, 401}` | Action on a failed callback |
 | `claims_mapping` | `#{binary() => atom()} \| {module(), atom()}` | `#{}` | How to map claims to actor |
 | `provider_configuration_opts` | `oidcc_provider_configuration:opts()` | `#{}` | Options for every provider's discovery/JWKS fetch - see below |
+
+`on_failure` is checked when the config is first loaded: any other value
+raises `{invalid_on_failure, Value}` from `nova_auth_oidc:config/1`. It only
+applies to the callback. If the login step cannot build the provider's
+authorization URL (for example the provider is unreachable), the login
+answers 502 instead.
 
 ## Provider discovery/JWKS trust options
 
@@ -108,6 +114,22 @@ A callback without a matching `state`, without a stored nonce, or for a
 different provider than the login started with is an authentication
 failure and gets `on_failure`. An unknown `:provider` in the login or
 callback path gets a 404.
+
+A session holds one login at a time. Starting a login in a second tab
+overwrites the first tab's state and nonce, so the first tab's callback
+then fails with `on_failure`.
+
+## Session cookie and `response_mode`
+
+The callback must arrive with the session cookie, since the state and
+nonce live in the session. Nova's default `SameSite=Lax` cookie is sent on
+the top-level GET redirect used by the default `response_mode=query`. It is
+not sent on a cross-site POST, so `response_mode=form_post` does not work
+with a Lax cookie: every callback fails with `on_failure`.
+
+The callback does not yet check the RFC 9207 `iss` response parameter.
+Configure one client per provider, with distinct redirect URIs, which is
+what the per-provider callback path gives you.
 
 ## Provider Worker Names
 
