@@ -39,7 +39,13 @@ build_worker_opts_caller_backoff_overrides_default_test() ->
 %% worker is registered as. issuer/name must win regardless of what a
 %% caller passes in ExtraOpts.
 build_worker_opts_extra_opts_cannot_override_issuer_or_name_test() ->
-    Extra = #{issuer => ~"https://evil.example.com", name => {local, someone_else}},
+    Extra = hostile_extra_opts(),
     Opts = nova_auth_oidc_sup:build_worker_opts(my_worker, ~"https://issuer.example.com", Extra),
     ?assertEqual(~"https://issuer.example.com", maps:get(issuer, Opts)),
     ?assertEqual({local, my_worker}, maps:get(name, Opts)).
+
+%% Deliberately outside extra_worker_opts(): the test checks the
+%% supervisor ignores keys its type forbids.
+-spec hostile_extra_opts() -> dynamic().
+hostile_extra_opts() ->
+    #{issuer => ~"https://evil.example.com", name => {local, someone_else}}.

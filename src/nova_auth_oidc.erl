@@ -102,12 +102,12 @@ config(Mod) ->
             Merged = maps:merge(Defaults, Cfg),
             persistent_term:put({nova_auth_oidc, Mod}, Merged),
             Merged;
-        Cfg ->
+        Cfg when is_map(Cfg) ->
             Cfg
     end.
 
 -doc "Return a single config value for `Key` from the OIDC module `Mod`.".
--spec config(module(), atom()) -> term().
+-spec config(module(), atom()) -> dynamic().
 config(Mod, Key) ->
     maps:get(Key, config(Mod)).
 

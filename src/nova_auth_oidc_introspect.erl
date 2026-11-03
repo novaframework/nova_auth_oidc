@@ -14,8 +14,6 @@ end
 ```
 """.
 
--include_lib("oidcc/include/oidcc_token_introspection.hrl").
-
 -export([introspect/3]).
 
 -doc "Introspect an access token at the provider's introspection endpoint.".
@@ -36,14 +34,20 @@ introspect(AuthMod, Provider, AccessToken) ->
 %% Internal
 %%----------------------------------------------------------------------
 
-introspection_to_map(#oidcc_token_introspection{} = I) ->
+%% Matched as a tuple: oidcc_token_introspection.hrl types `extra` as
+%% `#{binary() := term()}`, which eqwalizer rejects in every module that
+%% includes it. nova_auth_oidc_introspect_tests pins the field order.
+introspection_to_map(
+    {oidcc_token_introspection, Active, ClientId, Exp, Scope, Username, TokenType, _Iat, _Nbf, _Sub,
+        _Aud, Iss, _Jti, Extra}
+) ->
     #{
-        active => I#oidcc_token_introspection.active,
-        client_id => I#oidcc_token_introspection.client_id,
-        exp => I#oidcc_token_introspection.exp,
-        scope => I#oidcc_token_introspection.scope,
-        username => I#oidcc_token_introspection.username,
-        token_type => I#oidcc_token_introspection.token_type,
-        iss => I#oidcc_token_introspection.iss,
-        extra => I#oidcc_token_introspection.extra
+        active => Active,
+        client_id => ClientId,
+        exp => Exp,
+        scope => Scope,
+        username => Username,
+        token_type => TokenType,
+        iss => Iss,
+        extra => Extra
     }.

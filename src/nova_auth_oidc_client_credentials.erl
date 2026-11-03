@@ -26,7 +26,7 @@ get_token(AuthMod, Provider, Scopes) ->
     CacheKey = {nova_auth_oidc_cc, AuthMod, Provider},
     Now = erlang:system_time(second),
     case persistent_term:get(CacheKey, undefined) of
-        #{token := Token, expires_at := ExpiresAt} when ExpiresAt > Now + 30 ->
+        #{token := Token, expires_at := ExpiresAt} when is_binary(Token), ExpiresAt > Now + 30 ->
             {ok, Token};
         _ ->
             fetch_and_cache(AuthMod, Provider, Scopes, CacheKey)
