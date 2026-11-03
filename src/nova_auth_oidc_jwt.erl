@@ -80,7 +80,9 @@ Steps:
    `oidcc_token:validate_jwt/3`: `iss` is the provider's issuer, `aud` holds
    the client_id, `exp` is in the future, `nbf` (if present) is in the past,
    and `iss`, `sub`, `aud`, `exp` and `iat` are present
-3. Check the configured issuer, a non-empty `sub` and `azp` (if present)
+3. Check the configured issuer, a non-empty `sub`, and `azp`: it must
+   equal the client_id when present, and is required when `aud` lists more
+   than one audience
 4. Apply claims mapping and return the actor map
 
 A token whose `kid` is not in the cached JWKS makes the worker refetch the
@@ -252,9 +254,11 @@ validate_audience(AuthMod, Provider, Claims) ->
     case Aud of
         ExpectedAud ->
             validate_azp(ExpectedAud, Claims);
+        [ExpectedAud] ->
+            validate_azp(ExpectedAud, Claims);
         AudList when is_list(AudList) ->
             case lists:member(ExpectedAud, AudList) of
-                true -> validate_azp(ExpectedAud, Claims);
+                true -> require_azp(ExpectedAud, Claims);
                 false -> {error, invalid_audience}
             end;
         _ ->
@@ -271,6 +275,14 @@ validate_audience(AuthMod, Provider, Claims) ->
 validate_azp(ExpectedAud, Claims) ->
     case maps:get(~"azp", Claims, undefined) of
         undefined -> ok;
+        ExpectedAud -> ok;
+        _ -> {error, invalid_azp}
+    end.
+
+%% A token with several audiences was issued for one of them; OIDC Core
+%% 3.1.3.7 has azp name which, and only our own client_id is accepted.
+require_azp(ExpectedAud, Claims) ->
+    case maps:get(~"azp", Claims, undefined) of
         ExpectedAud -> ok;
         _ -> {error, invalid_azp}
     end.

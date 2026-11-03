@@ -56,8 +56,14 @@ missing_issuer_rejected_test() ->
 wrong_audience_rejected_test() ->
     ?assertEqual({error, invalid_audience}, validate((base())#{~"aud" => ~"someone-else"})).
 
-audience_list_pass_test() ->
-    ?assertEqual(ok, validate((base())#{~"aud" => [~"other", ?AUD]})).
+single_audience_list_without_azp_accepted_test() ->
+    ?assertEqual(ok, validate((base())#{~"aud" => [?AUD]})).
+
+multi_audience_without_azp_rejected_test() ->
+    ?assertEqual({error, invalid_azp}, validate((base())#{~"aud" => [~"other", ?AUD]})).
+
+multi_audience_with_our_azp_accepted_test() ->
+    ?assertEqual(ok, validate((base())#{~"aud" => [~"other", ?AUD], ~"azp" => ?AUD})).
 
 %% OIDC Core 3.1.3.7: azp, when present, must equal our client_id - aud
 %% alone isn't proof the token was issued for us on a shared IdP where

@@ -39,7 +39,8 @@ back to JWT bearer validation.
 1. Extract `Authorization: Bearer <token>` header
 2. Get the JWKS from the provider's cached configuration worker
 3. Verify the JWT signature using `jose_jwt:verify/2`
-4. Validate `exp` (not expired) and `aud` (matches client_id)
+4. Validate `exp` (not expired), `aud` (holds client_id) and `azp` (see
+   below)
 5. Apply `claims_mapping` from config to build the actor
 6. Return `{ok, Actor}` or `{error, Reason}`
 
@@ -83,11 +84,14 @@ end.
 | `invalid_claims` | JWT `exp` or `nbf` is not a number |
 | `invalid_issuer` | JWT `iss` is not the provider's issuer |
 | `invalid_audience` | JWT `aud` doesn't match client_id |
-| `invalid_azp` | JWT `azp` is present and is not the client_id |
+| `invalid_azp` | JWT `azp` is not the client_id, or is missing while `aud` lists more than one audience |
 
 Validation goes through `oidcc_token:validate_jwt/3` with RS256/384/512 and
 ES256/384/512 only, so the token must carry `iss`, `sub`, `aud`, `exp` and
 `iat`.
+
+A token whose `aud` lists more than one audience must carry `azp` equal to
+the client_id (OIDC Core 3.1.3.7). A single audience needs no `azp`.
 
 ## JWKS Caching
 
