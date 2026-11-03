@@ -98,8 +98,7 @@ validate_token(AuthMod, Provider, Token) ->
             %% present, and enforces the algorithm allowlist itself (also
             %% closing off alg:none and cross-algorithm confusion).
             case oidcc_jwt_util:verify_signature(Token, ?ALLOWED_ALGORITHMS, Jwks) of
-                {ok, {Jwt, _Jws}} ->
-                    Claims = Jwt#jose_jwt.fields,
+                {ok, {#jose_jwt{fields = Claims}, _Jws, _Jwk}} ->
                     case validate_claims(AuthMod, Provider, Claims) of
                         ok ->
                             Actor = build_actor(AuthMod, Provider, Claims),

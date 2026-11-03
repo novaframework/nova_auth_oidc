@@ -118,6 +118,8 @@ protected routes.
 ## Requirements
 
 - Erlang/OTP 28+
+- oidcc 3.9+ and jose 1.11.13+. Earlier oidcc accepts a JWE ID token
+  without a nested signature (CVE-2026-75759, GHSA-533g-4vf3-xwrj).
 
 ## License
 

@@ -8,6 +8,18 @@
 -define(ISS, ~"https://auth.example.com/application/o/myapp").
 -define(AUD, ~"test-client-id").
 
+%% oidcc before 3.9.0 accepts a JWE ID token without a nested signature
+%% (CVE-2026-75759, GHSA-533g-4vf3-xwrj); jose before 1.11.13 has known CVEs.
+dependency_floors_test() ->
+    ?assert(vsn_at_least(oidcc, [3, 9, 0])),
+    ?assert(vsn_at_least(jose, [1, 11, 13])).
+
+vsn_at_least(App, Floor) ->
+    _ = application:load(App),
+    {ok, Vsn} = application:get_key(App, vsn),
+    VsnBin = iolist_to_binary(io_lib:format("~s", [Vsn])),
+    [binary_to_integer(Part) || Part <- binary:split(VsnBin, ~".", [global])] >= Floor.
+
 valid_claims_pass_test() ->
     ?assertEqual(ok, validate(base())).
 
