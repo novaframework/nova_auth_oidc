@@ -145,12 +145,14 @@ client_context(WorkerName, ClientId) ->
     end.
 
 %% oidcc compares exp and nbf arithmetically and raises on a non-numeric
-%% value, which only a token the provider itself signed can carry.
+%% value, which only a token the provider itself signed can carry. jose
+%% raises on input that does not parse as a JWS at all.
 validate_jwt(Token, ClientContext, Opts) ->
     try
         oidcc_token:validate_jwt(Token, ClientContext, Opts)
     catch
-        error:badarith -> {error, invalid_claims}
+        error:badarith -> {error, invalid_claims};
+        error:_ -> {error, malformed_token}
     end.
 
 refresh_jwks(WorkerName, Kid) ->

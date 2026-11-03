@@ -137,7 +137,9 @@ validate_token_test_() ->
         {"an unknown kid refetches the JWKS and validates against the new key",
             fun unknown_kid_refreshes_jwks/0},
         {"unknown-kid refetches are limited per provider",
-            fun unknown_kid_refresh_is_rate_limited/0}
+            fun unknown_kid_refresh_is_rate_limited/0},
+        {"malformed tokens are invalid_signature, not a crash", fun malformed_tokens_rejected/0},
+        {"a malformed bearer token gets a 401", fun malformed_bearer_is_unauthorized/0}
     ]}.
 
 signed_token_validates() ->
@@ -271,6 +273,55 @@ unknown_kid_refresh_is_rate_limited() ->
     ?assertEqual(
         1, meck:num_calls(oidcc_provider_configuration_worker, refresh_jwks_for_unknown_kid, '_')
     ).
+
+malformed_tokens_rejected() ->
+    mock_jwks(jwks_of([rsa_key()])),
+    Payload = b64url(iolist_to_binary(json:encode(claims()))),
+    Tokens = [
+        ~"a.b.c",
+        ~"a.b.c.d.e",
+        ~"!!!.!!!.!!!",
+        <<(b64url(~"not json"))/binary, ".", Payload/binary, ".abc">>,
+        <<
+            (b64url(iolist_to_binary(json:encode(#{~"alg" => 1}))))/binary,
+            ".",
+            Payload/binary,
+            ".abc"
+        >>
+    ],
+    ?assertEqual(
+        [{Token, {error, invalid_signature}} || Token <- Tokens],
+        [{Token, validate_raising(Token)} || Token <- Tokens]
+    ).
+
+malformed_bearer_is_unauthorized() ->
+    mock_jwks(jwks_of([rsa_key()])),
+    Req = #{
+        ref => test,
+        pid => self(),
+        streamid => 1,
+        peer => {{127, 0, 0, 1}, 40000},
+        sock => {{127, 0, 0, 1}, 8080},
+        cert => undefined,
+        method => ~"GET",
+        version => 'HTTP/1.1',
+        scheme => ~"http",
+        host => ~"localhost",
+        port => 8080,
+        path => ~"/api",
+        qs => ~"",
+        headers => #{~"authorization" => ~"Bearer !!!.!!!.!!!"},
+        has_body => false,
+        body_length => 0
+    },
+    ?assertMatch({false, 401, _, _}, nova_auth_oidc_security:require_bearer(test_oidc_config, Req)).
+
+validate_raising(Token) ->
+    try
+        nova_auth_oidc_jwt:validate_token(test_oidc_config, authentik, Token)
+    catch
+        Class:Reason -> {raised, Class, Reason}
+    end.
 
 %% ---- signature-test helpers ----
 

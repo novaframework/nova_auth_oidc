@@ -74,7 +74,7 @@ end.
 | `missing_bearer` | No `Authorization: Bearer` header |
 | `no_providers` | No providers configured |
 | `provider_not_available` | Provider worker not running |
-| `invalid_signature` | JWT signature verification failed, or its `kid` is not in the JWKS |
+| `invalid_signature` | JWT signature verification failed, its `kid` is not in the JWKS, or it is not a well-formed JWS |
 | `missing_exp` | JWT has no `exp` claim |
 | `missing_iat` | JWT has no `iat` claim |
 | `missing_sub` | JWT has no (or an empty) `sub` claim |
