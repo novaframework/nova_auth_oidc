@@ -18,7 +18,8 @@
     callback_provider_error_is_401_and_single_use/1,
     callback_state_consumed_before_exchange/1,
     callback_userinfo_error_is_401/1,
-    callback_session_store_error_is_401/1
+    callback_session_store_error_is_401/1,
+    callback_stale_state_logs_at_notice/1
 ]).
 
 -define(OLD_ID, ~"planted-session-id").
@@ -41,7 +42,8 @@ all() ->
         callback_provider_error_is_401_and_single_use,
         callback_state_consumed_before_exchange,
         callback_userinfo_error_is_401,
-        callback_session_store_error_is_401
+        callback_session_store_error_is_401,
+        callback_stale_state_logs_at_notice
     ].
 
 init_per_suite(Config) ->
@@ -223,6 +225,28 @@ callback_session_store_error_is_401(_Config) ->
     after
         test_log_capture:stop(),
         application:set_env(nova, session_manager, test_session_backend)
+    end.
+
+callback_stale_state_logs_at_notice(_Config) ->
+    ok = test_log_capture:start(),
+    try
+        Wrong = (req())#{qs => ~"code=auth-code&state=attacker-chosen-val"},
+        ?assertEqual({status, 401}, nova_auth_oidc_controller:callback(Wrong)),
+        NoLogin = (req())#{nova_session_id => ~"no-login-session"},
+        ?assertEqual({status, 401}, nova_auth_oidc_controller:callback(NoLogin)),
+        ?assertEqual(
+            [{notice, state_mismatch}, {notice, no_login_in_session}],
+            [
+                {Level, Tag}
+             || #{
+                    level := Level,
+                    msg :=
+                        {report, #{msg := ~"nova_auth_oidc authentication failed", reason := Tag}}
+                } <- test_log_capture:events()
+            ]
+        )
+    after
+        test_log_capture:stop()
     end.
 
 callback(Req) ->

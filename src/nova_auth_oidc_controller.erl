@@ -232,8 +232,15 @@ retrieve_token_and_userinfo(WorkerName, ClientId, ClientSecret, Code, TokenOpts)
     end.
 
 handle_failure(AuthMod, Reason) ->
-    ?LOG_WARNING(#{msg => ~"nova_auth_oidc authentication failed", reason => reason_tag(Reason)}),
+    Tag = reason_tag(Reason),
+    ?LOG(failure_level(Tag), #{msg => ~"nova_auth_oidc authentication failed", reason => Tag}),
     nova_auth_oidc:config(AuthMod, on_failure).
+
+%% A callback without a login in this session, or with a stale state, is
+%% what an expired session or a second tab produces; anyone can send one.
+failure_level(no_login_in_session) -> notice;
+failure_level(state_mismatch) -> notice;
+failure_level(_Tag) -> warning.
 
 %% oidcc reasons can carry tokens or claims (e.g. {none_alg_used, Token}),
 %% so only the tag is logged.
