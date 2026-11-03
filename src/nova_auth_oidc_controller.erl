@@ -3,8 +3,16 @@
 Nova controller for OpenID Connect authentication flows.
 
 Handles login redirect and OAuth callback endpoints. After successful
-authentication, stores a mapped actor in the Nova session via
+authentication, the callback moves the client to a new session id
+(against session fixation) and stores a mapped actor in it via
 `nova_auth_actor`, making it compatible with `nova_auth_security`.
+
+Session renewal uses `nova_session:renew(Req)` when the running Nova
+provides it. On older Nova releases the callback deletes the session with
+`nova_session:delete/1` and sets a new `session_id` cookie itself: a
+256-bit `crypto:strong_rand_bytes/1` id with `Path=/`, `HttpOnly`,
+`SameSite=Lax`, and `Secure` on HTTPS requests. The `nova` application's
+`session_cookie_opts` map, when set, is merged over those defaults.
 
 ## Routes
 
@@ -64,8 +72,8 @@ login(#{bindings := #{provider := ProviderBin}} = Req) ->
 Handle the OAuth callback after the user authenticates with the provider.
 
 Exchanges the authorization code for tokens, retrieves user info,
-applies claims mapping, stores the actor in the session, and redirects
-to the configured success URL.
+applies claims mapping, renews the session, stores the actor in the new
+session, and redirects to the configured success URL.
 """.
 -spec callback(map()) -> term().
 callback(#{bindings := #{provider := ProviderBin}} = Req) ->
@@ -104,18 +112,12 @@ handle_code(Req, AuthMod, Provider, Code) ->
 
             case retrieve_token_and_userinfo(WorkerName, ClientId, ClientSecret, Code, TokenOpts) of
                 {ok, _Token, Userinfo} ->
-                    %% Clean up temporary auth state
-                    _ = nova_session:delete(Req, ~"oidc_nonce"),
-                    _ = nova_session:delete(Req, ~"oidc_pkce"),
-                    _ = nova_session:delete(Req, ~"oidc_provider"),
-
-                    %% Map claims to actor and store in session
                     Actor = build_actor(AuthMod, Provider, Userinfo),
-                    ok = nova_auth_actor:store(Req, Actor),
-
+                    {ok, Req1} = renew_session(Req),
+                    ok = nova_auth_actor:store(Req1, Actor),
                     case nova_auth_oidc:config(AuthMod, on_success) of
-                        {redirect, Url} -> {redirect, Url};
-                        _ -> {redirect, ~"/"}
+                        {redirect, Url} -> {redirect, Url, Req1};
+                        _ -> {redirect, ~"/", Req1}
                     end;
                 {error, Reason} ->
                     handle_failure(AuthMod, Reason)
@@ -155,6 +157,37 @@ handle_failure(AuthMod, Reason) ->
         {status, Code} -> {status, Code};
         {redirect, Url} -> {redirect, Url};
         _ -> {status, 401}
+    end.
+
+renew_session(Req) ->
+    _ = code:ensure_loaded(nova_session),
+    case erlang:function_exported(nova_session, renew, 1) of
+        true -> nova_session_renew(Req);
+        false -> renew_session_fallback(Req)
+    end.
+
+%% Called through a variable: older Nova releases have no renew/1, and a
+%% literal remote call would fail xref there.
+nova_session_renew(Req) ->
+    Mod = nova_session,
+    Mod:renew(Req).
+
+renew_session_fallback(Req0) ->
+    {ok, Req1} = nova_session:delete(Req0),
+    SessionId = generate_random(32),
+    Req2 = cowboy_req:set_resp_cookie(~"session_id", SessionId, Req1, cookie_opts(Req1)),
+    {ok, Req2#{nova_session_id => SessionId}}.
+
+cookie_opts(Req) ->
+    Defaults = #{
+        path => ~"/",
+        http_only => true,
+        same_site => lax,
+        secure => cowboy_req:scheme(Req) =:= ~"https"
+    },
+    case application:get_env(nova, session_cookie_opts) of
+        {ok, Opts} when is_map(Opts) -> maps:merge(Defaults, Opts);
+        _ -> Defaults
     end.
 
 auth_mod(Req) ->
