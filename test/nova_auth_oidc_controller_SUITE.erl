@@ -6,6 +6,7 @@
 -export([
     callback_renews_session/1,
     callback_planted_session_stays_anonymous/1,
+    login_redirect_url_error_is_502/1,
     failure_log_has_no_token/1,
     login_unknown_provider_is_404/1,
     callback_unknown_provider_is_404/1,
@@ -25,6 +26,7 @@ all() ->
     [
         callback_renews_session,
         callback_planted_session_stays_anonymous,
+        login_redirect_url_error_is_502,
         failure_log_has_no_token,
         login_unknown_provider_is_404,
         callback_unknown_provider_is_404,
@@ -77,6 +79,13 @@ callback_renews_session(_Config) ->
 callback_planted_session_stays_anonymous(_Config) ->
     {_, _} = callback(req()),
     ?assertEqual({error, not_found}, nova_auth_actor:fetch(req())).
+
+login_redirect_url_error_is_502(_Config) ->
+    ok = meck:expect(oidcc, create_redirect_url, fun(_, _, _, _) ->
+        {error, {configuration_load_failed, ~"discovery-secret"}}
+    end),
+    Req = (req())#{nova_session_id => ~"login-error-session"},
+    ?assertEqual({status, 502}, nova_auth_oidc_controller:login(Req)).
 
 failure_log_has_no_token(_Config) ->
     Token = ~"eyJhbGciOiJub25lIn0.secret-token-payload.",

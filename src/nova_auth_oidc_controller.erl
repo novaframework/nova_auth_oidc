@@ -30,6 +30,9 @@ Initiate OIDC login by redirecting to the provider's authorization endpoint.
 
 Generates state, nonce and PKCE verifier, stores them in the session,
 and redirects the user to the provider. An unknown `:provider` gets a 404.
+If the authorization URL cannot be built (provider unreachable,
+discovery not loaded, bad provider config) the reply is a 502; that is a
+server-side fault, so `on_failure` is not used and cannot loop back here.
 """.
 -spec login(map()) -> term().
 login(#{bindings := #{provider := ProviderBin}} = Req) ->
@@ -60,7 +63,12 @@ login(#{bindings := #{provider := ProviderBin}} = Req) ->
                 {ok, AuthUrl} ->
                     {redirect, AuthUrl};
                 {error, Reason} ->
-                    handle_failure(AuthMod, Reason)
+                    ?LOG_WARNING(#{
+                        msg => ~"nova_auth_oidc could not build the authorization URL",
+                        provider => Provider,
+                        reason => reason_tag(Reason)
+                    }),
+                    {status, 502}
             end;
         {error, not_found} ->
             unknown_provider()
