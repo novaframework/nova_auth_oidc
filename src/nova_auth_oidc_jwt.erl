@@ -80,10 +80,13 @@ Steps:
    `oidcc_token:validate_jwt/3`: `iss` is the provider's issuer, `aud` holds
    the client_id, `exp` is in the future, `nbf` (if present) is in the past,
    and `iss`, `sub`, `aud`, `exp` and `iat` are present
-3. Check the configured issuer, a non-empty `sub`, and `azp`: it must
-   equal the client_id when present, and is required when `aud` lists more
-   than one audience
+3. Check the configured issuer, an integer `iat` that is not in the
+   future, a non-empty `sub`, and `azp`: it must equal the client_id when
+   present, and is required when `aud` lists more than one audience
 4. Apply claims mapping and return the actor map
+
+The time checks on `exp`, `nbf` and `iat` allow `max_clock_skew` seconds
+from the `oidcc` application env (default 0).
 
 A token whose `kid` is not in the cached JWKS makes the worker refetch the
 JWKS once, so a key the provider just rotated in is accepted. Refetches for
@@ -209,11 +212,14 @@ error_class(Reason) when is_tuple(Reason), tuple_size(Reason) > 0, is_atom(eleme
 error_class(_Reason) ->
     unknown.
 
+%% exp and iat allow the same max_clock_skew (seconds, oidcc application
+%% env, default 0) that oidcc applies to exp and nbf.
 validate_claims(AuthMod, Provider, Claims) ->
     Now = erlang:system_time(second),
+    Skew = max_clock_skew(),
     case maps:get(~"exp", Claims, undefined) of
-        Exp when is_number(Exp), Exp > Now ->
-            validate_subject(AuthMod, Provider, Claims);
+        Exp when is_number(Exp), Exp + Skew >= Now ->
+            validate_iat(AuthMod, Provider, Claims, Now + Skew);
         undefined ->
             {error, missing_exp};
         Exp when is_number(Exp) ->
@@ -224,6 +230,23 @@ validate_claims(AuthMod, Provider, Claims) ->
             %% treated it as "not expired" - reject the shape outright
             %% rather than silently accept a claim that isn't a timestamp.
             {error, invalid_exp}
+    end.
+
+validate_iat(AuthMod, Provider, Claims, Latest) ->
+    case maps:get(~"iat", Claims, undefined) of
+        Iat when is_integer(Iat), Iat =< Latest ->
+            validate_subject(AuthMod, Provider, Claims);
+        undefined ->
+            {error, missing_iat};
+        _ ->
+            {error, invalid_iat}
+    end.
+
+max_clock_skew() ->
+    %% elp:ignore W0011 - the same setting oidcc applies to exp and nbf
+    case application:get_env(oidcc, max_clock_skew, 0) of
+        Skew when is_integer(Skew), Skew >= 0 -> Skew;
+        _ -> 0
     end.
 
 %% sub identifies the end user. nova_auth:actor()'s `id` field is

@@ -65,6 +65,34 @@ multi_audience_without_azp_rejected_test() ->
 multi_audience_with_our_azp_accepted_test() ->
     ?assertEqual(ok, validate((base())#{~"aud" => [~"other", ?AUD], ~"azp" => ?AUD})).
 
+missing_iat_in_claims_rejected_test() ->
+    ?assertEqual({error, missing_iat}, validate(maps:remove(~"iat", base()))).
+
+string_iat_rejected_test() ->
+    Now = integer_to_binary(erlang:system_time(second)),
+    ?assertEqual({error, invalid_iat}, validate((base())#{~"iat" => Now})).
+
+future_iat_rejected_test() ->
+    ?assertEqual({error, invalid_iat}, validate((base())#{~"iat" => future()})).
+
+exp_just_past_rejected_without_skew_test() ->
+    ?assertEqual(
+        {error, token_expired},
+        validate((base())#{~"exp" => erlang:system_time(second) - 30})
+    ).
+
+clock_skew_applies_to_exp_and_iat_test() ->
+    Now = erlang:system_time(second),
+    ok = application:set_env(oidcc, max_clock_skew, 60),
+    try
+        ?assertEqual(ok, validate((base())#{~"exp" => Now - 30})),
+        ?assertEqual(ok, validate((base())#{~"iat" => Now + 30})),
+        ?assertEqual({error, token_expired}, validate((base())#{~"exp" => Now - 120})),
+        ?assertEqual({error, invalid_iat}, validate((base())#{~"iat" => Now + 120}))
+    after
+        ok = application:unset_env(oidcc, max_clock_skew)
+    end.
+
 %% OIDC Core 3.1.3.7: azp, when present, must equal our client_id - aud
 %% alone isn't proof the token was issued for us on a shared IdP where
 %% another client could list us as an additional audience.
@@ -84,7 +112,13 @@ validate(Claims) ->
     nova_auth_oidc_jwt:validate_claims(test_oidc_config, authentik, Claims).
 
 base() ->
-    #{~"exp" => future(), ~"iss" => ?ISS, ~"aud" => ?AUD, ~"sub" => ~"user-1"}.
+    #{
+        ~"exp" => future(),
+        ~"iat" => erlang:system_time(second),
+        ~"iss" => ?ISS,
+        ~"aud" => ?AUD,
+        ~"sub" => ~"user-1"
+    }.
 
 future() -> erlang:system_time(second) + 3600.
 past() -> erlang:system_time(second) - 3600.

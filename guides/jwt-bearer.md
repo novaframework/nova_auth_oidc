@@ -39,8 +39,8 @@ back to JWT bearer validation.
 1. Extract `Authorization: Bearer <token>` header
 2. Get the JWKS from the provider's cached configuration worker
 3. Verify the JWT signature using `jose_jwt:verify/2`
-4. Validate `exp` (not expired), `aud` (holds client_id) and `azp` (see
-   below)
+4. Validate `exp` (not expired), `iat` (an integer, not in the future),
+   `aud` (holds client_id) and `azp` (see below)
 5. Apply `claims_mapping` from config to build the actor
 6. Return `{ok, Actor}` or `{error, Reason}`
 
@@ -82,6 +82,7 @@ end.
 | `token_expired` | JWT `exp` is in the past |
 | `token_not_yet_valid` | JWT `nbf` is in the future |
 | `invalid_claims` | JWT `exp` or `nbf` is not a number |
+| `invalid_iat` | JWT `iat` is not an integer, or is in the future |
 | `invalid_issuer` | JWT `iss` is not the provider's issuer |
 | `invalid_audience` | JWT `aud` doesn't match client_id |
 | `invalid_azp` | JWT `azp` is not the client_id, or is missing while `aud` lists more than one audience |
@@ -92,6 +93,16 @@ ES256/384/512 only, so the token must carry `iss`, `sub`, `aud`, `exp` and
 
 A token whose `aud` lists more than one audience must carry `azp` equal to
 the client_id (OIDC Core 3.1.3.7). A single audience needs no `azp`.
+
+## Clock Skew
+
+The `exp`, `nbf` and `iat` checks allow `max_clock_skew` seconds of drift
+between your node and the provider. It is read from the `oidcc` application
+env and defaults to 0:
+
+```erlang
+{oidcc, [{max_clock_skew, 30}]}
+```
 
 ## JWKS Caching
 
