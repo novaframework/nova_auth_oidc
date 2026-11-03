@@ -6,7 +6,7 @@ Add `nova_auth_oidc` to your `rebar.config` dependencies:
 
 ```erlang
 {deps, [
-    {nova_auth_oidc, {git, "https://github.com/Taure/nova_auth_oidc.git", {branch, "main"}}}
+    {nova_auth_oidc, "~> 0.3.0"}
 ]}.
 ```
 
@@ -95,6 +95,30 @@ routes(_Env) ->
 
 The `:provider` path parameter selects which provider to use. With the config
 above, the login URL is `/auth/authentik/login`.
+
+### Limit the `/auth` scope
+
+Every request to a login route writes the state, nonce and PKCE verifier to
+a session, and a client without a session cookie gets a new session each
+time. Unauthenticated clients can therefore grow the session store with
+plain GET requests. Rate-limit the `/auth` scope and give sessions a
+lifetime:
+
+```erlang
+#{prefix => ~"/auth",
+  security => false,
+  plugins => [{pre_request, nova_auth_rate_limit, #{limit => 20, window => 60000}}],
+  routes => [...]}
+```
+
+```erlang
+%% sys.config: drop sessions an hour after they were created
+{nova, [{session_max_age, 3600}]}
+```
+
+Behind a reverse proxy, key the limiter on the client address with
+`key => {nova_auth_rate_limit, client_ip}` and the `trusted_proxies`
+setting described in nova_auth's rate limiting guide.
 
 ## Access Actor in Controllers
 

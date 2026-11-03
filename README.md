@@ -3,7 +3,7 @@
 OpenID Connect authentication for [Nova](https://github.com/novaframework/nova) web applications.
 
 Provides OIDC login flows, JWT bearer validation, token introspection, and
-client credentials (M2M) -- all integrated with [nova_auth](https://github.com/Taure/nova_auth)'s
+client credentials (M2M) -- all integrated with [nova_auth](https://github.com/novaframework/nova_auth)'s
 unified actor session.
 
 ## Features
@@ -12,10 +12,19 @@ unified actor session.
 - **JWT bearer validation** -- protect API routes with provider-issued JWTs
 - **Token introspection** -- check revocation status (RFC 7662)
 - **Client credentials** -- machine-to-machine tokens with caching
-- **Claims mapping** -- transform provider claims to actor maps via [nova_auth_claims](https://github.com/Taure/nova_auth)
+- **Claims mapping** -- transform provider claims to actor maps via [nova_auth_claims](https://github.com/novaframework/nova_auth)
 - **Nova integration** -- security callbacks, plugins, route protection
 
 ## Quick Start
+
+Add the package from [Hex](https://hex.pm/packages/nova_auth_oidc); it pulls in
+`nova_auth` and `oidcc`:
+
+```erlang
+{deps, [
+    {nova_auth_oidc, "~> 0.3.0"}
+]}.
+```
 
 ```erlang
 %% 1. Define your OIDC config
@@ -73,14 +82,22 @@ routes(_Env) ->
 ## How It Works
 
 1. User visits `/auth/authentik/login`
-2. Controller generates nonce + PKCE, stores in session, redirects to provider
+2. Controller generates state, nonce and PKCE verifier, stores them in the
+   session, redirects to provider
 3. User authenticates at Authentik
-4. Authentik redirects to `/auth/authentik/callback?code=...`
-5. Controller exchanges code for tokens via `oidcc`
-6. Controller retrieves userinfo from provider
+4. Authentik redirects to `/auth/authentik/callback?code=...&state=...`
+5. Controller checks that `state` matches the session and that the session
+   holds the nonce for this provider. Otherwise it answers with `on_failure`
+   (401 by default). Either way it deletes the login state before going on,
+   so a replayed or concurrent callback with the same `state` fails
+6. Controller exchanges the code for tokens via `oidcc` and retrieves
+   userinfo from the provider; if either fails, the reply is `on_failure`
 7. Claims are mapped to an actor via `nova_auth_claims`
-8. Actor is stored in session via `nova_auth_actor`
-9. User is redirected to the success URL
+8. The session is renewed: the old session (and its id) is deleted and the
+   client gets a new session id, so an id planted before login is worthless
+   (session fixation)
+9. Actor is stored in the new session via `nova_auth_actor`
+10. User is redirected to the success URL
 
 From this point, `nova_auth_security:require_authenticated()` works for all
 protected routes.
@@ -95,14 +112,16 @@ protected routes.
 
 ## Dependencies
 
-- [nova_auth](https://github.com/Taure/nova_auth) -- unified actor session, claims mapping, policies
+- [nova_auth](https://github.com/novaframework/nova_auth) -- unified actor session, claims mapping, policies
 - [oidcc](https://github.com/erlef/oidcc) -- ERLEF OpenID Connect Certified client
 - [nova](https://github.com/novaframework/nova) -- web framework
 
 ## Requirements
 
 - Erlang/OTP 28+
+- oidcc 3.9+ and jose 1.11.13+. Earlier oidcc accepts a JWE ID token
+  without a nested signature (CVE-2026-75759, GHSA-533g-4vf3-xwrj).
 
 ## License
 
-MIT
+Apache-2.0

@@ -39,7 +39,8 @@ back to JWT bearer validation.
 1. Extract `Authorization: Bearer <token>` header
 2. Get the JWKS from the provider's cached configuration worker
 3. Verify the JWT signature using `jose_jwt:verify/2`
-4. Validate `exp` (not expired) and `aud` (matches client_id)
+4. Validate `exp` (not expired), `iat` (an integer, not in the future),
+   `aud` (holds client_id) and `azp` (see below)
 5. Apply `claims_mapping` from config to build the actor
 6. Return `{ok, Actor}` or `{error, Reason}`
 
@@ -74,13 +75,41 @@ end.
 | `missing_bearer` | No `Authorization: Bearer` header |
 | `no_providers` | No providers configured |
 | `provider_not_available` | Provider worker not running |
-| `invalid_signature` | JWT signature verification failed |
+| `invalid_signature` | JWT signature verification failed, its `kid` is not in the JWKS, or it is not a well-formed JWS |
 | `missing_exp` | JWT has no `exp` claim |
+| `missing_iat` | JWT has no `iat` claim |
+| `missing_sub` | JWT has no (or an empty) `sub` claim |
 | `token_expired` | JWT `exp` is in the past |
+| `token_not_yet_valid` | JWT `nbf` is in the future |
+| `invalid_claims` | JWT `exp` or `nbf` is not a number |
+| `invalid_iat` | JWT `iat` is not an integer, or is in the future |
+| `invalid_issuer` | JWT `iss` is not the provider's issuer |
 | `invalid_audience` | JWT `aud` doesn't match client_id |
+| `invalid_azp` | JWT `azp` is not the client_id, or is missing while `aud` lists more than one audience |
+
+Validation goes through `oidcc_token:validate_jwt/3` with RS256/384/512 and
+ES256/384/512 only, so the token must carry `iss`, `sub`, `aud`, `exp` and
+`iat`.
+
+A token whose `aud` lists more than one audience must carry `azp` equal to
+the client_id (OIDC Core 3.1.3.7). A single audience needs no `azp`.
+
+## Clock Skew
+
+The `exp`, `nbf` and `iat` checks allow `max_clock_skew` seconds of drift
+between your node and the provider. It is read from the `oidcc` application
+env and defaults to 0:
+
+```erlang
+{oidcc, [{max_clock_skew, 30}]}
+```
 
 ## JWKS Caching
 
 The JWKS is fetched and cached by the `oidcc_provider_configuration_worker`
-(the same worker used for OIDC login flows). Keys are refreshed automatically
-when the provider rotates them.
+(the same worker used for OIDC login flows), which refreshes it on the
+provider's cache schedule. A token whose `kid` is not in the cached JWKS makes
+the worker refetch it once, so a key the provider just rotated in is accepted
+straight away. These refetches are limited to one per provider every 10
+seconds, so tokens with made-up kids cannot turn every request into a JWKS
+fetch; within that window an unknown kid is `invalid_signature`.
