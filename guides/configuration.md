@@ -96,12 +96,18 @@ During the OIDC flow, temporary state is stored in the Nova session:
 
 | Key | Lifetime | Contents |
 |-----|----------|----------|
+| `oidc_state` | Login to callback | OAuth `state`, compared with the callback's `state` parameter |
 | `oidc_nonce` | Login to callback | Cryptographic nonce |
 | `oidc_pkce` | Login to callback | PKCE code verifier |
 | `oidc_provider` | Login to callback | Provider name |
 | `nova_auth_actor` | After callback | Mapped actor (permanent session) |
 
-The temporary keys are cleaned up after the callback completes.
+The temporary keys are single-use: a successful callback replaces the whole
+session (see session renewal in the README), and a failed one deletes them.
+A callback without a matching `state`, without a stored nonce, or for a
+different provider than the login started with is an authentication
+failure and gets `on_failure`. An unknown `:provider` in the login or
+callback path gets a 404.
 
 ## Provider Worker Names
 

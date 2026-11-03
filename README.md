@@ -82,10 +82,14 @@ routes(_Env) ->
 ## How It Works
 
 1. User visits `/auth/authentik/login`
-2. Controller generates nonce + PKCE, stores in session, redirects to provider
+2. Controller generates state, nonce and PKCE verifier, stores them in the
+   session, redirects to provider
 3. User authenticates at Authentik
-4. Authentik redirects to `/auth/authentik/callback?code=...`
-5. Controller exchanges code for tokens via `oidcc`
+4. Authentik redirects to `/auth/authentik/callback?code=...&state=...`
+5. Controller checks that `state` matches the session and that the session
+   holds the nonce for this provider, then exchanges the code for tokens via
+   `oidcc`. Otherwise it answers with `on_failure` (401 by default) and
+   deletes the login state, so it cannot be retried
 6. Controller retrieves userinfo from provider
 7. Claims are mapped to an actor via `nova_auth_claims`
 8. The session is renewed: the old session (and its id) is deleted and the
