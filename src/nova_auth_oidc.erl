@@ -191,7 +191,7 @@ check_on_failure({status, Code}) when is_integer(Code), Code >= 100, Code =< 599
     ok;
 check_on_failure({redirect, Url}) when is_binary(Url), byte_size(Url) > 0 ->
     ok;
-check_on_failure({redirect, [_ | _] = Url}) when is_list(Url) ->
+check_on_failure({redirect, [_ | _]}) ->
     ok;
 check_on_failure(Other) ->
     error({invalid_on_failure, Other}).

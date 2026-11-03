@@ -54,7 +54,7 @@ post_request(Req, _Env, _Options, State) ->
 plugin_info() ->
     #{
         title => ~"Nova Auth OIDC Plugin",
-        version => ~"0.1.0",
+        version => app_vsn(),
         url => ~"https://github.com/novaframework/nova_auth_oidc",
         authors => [~"Nova Team"],
         description => ~"Protects routes by requiring OIDC authentication",
@@ -82,3 +82,9 @@ unauthorized_reply({redirect, Url}) ->
     {reply, 302, #{~"location" => unicode:characters_to_binary(Url)}, ~""};
 unauthorized_reply({status, Code}) ->
     {reply, Code, #{}, ~""}.
+
+app_vsn() ->
+    case application:get_key(nova_auth_oidc, vsn) of
+        {ok, Vsn} when is_list(Vsn) -> iolist_to_binary(io_lib:format("~ts", [Vsn]));
+        _ -> ~"unknown"
+    end.

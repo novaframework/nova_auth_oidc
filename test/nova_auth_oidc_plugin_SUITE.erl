@@ -8,7 +8,8 @@
     anonymous_redirect_stops_with_302/1,
     anonymous_redirect_to_provider_login/1,
     anonymous_status_stops_with_code/1,
-    anonymous_without_options_is_401/1
+    anonymous_without_options_is_401/1,
+    plugin_info_version_is_app_vsn/1
 ]).
 
 all() ->
@@ -17,7 +18,8 @@ all() ->
         anonymous_redirect_stops_with_302,
         anonymous_redirect_to_provider_login,
         anonymous_status_stops_with_code,
-        anonymous_without_options_is_401
+        anonymous_without_options_is_401,
+        plugin_info_version_is_app_vsn
     ].
 
 init_per_suite(Config) ->
@@ -28,6 +30,14 @@ init_per_suite(Config) ->
 end_per_suite(_Config) ->
     ok = application:unset_env(nova, session_manager),
     test_session_backend:stop().
+
+plugin_info_version_is_app_vsn(_Config) ->
+    _ = application:load(nova_auth_oidc),
+    {ok, Vsn} = application:get_key(nova_auth_oidc, vsn),
+    ?assertEqual(
+        iolist_to_binary(io_lib:format("~ts", [Vsn])),
+        maps:get(version, nova_auth_oidc_plugin:plugin_info())
+    ).
 
 actor_passes_through(_Config) ->
     Req = req(~"plugin-actor"),
