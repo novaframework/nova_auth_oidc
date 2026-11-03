@@ -34,8 +34,10 @@ plugin or controller runs.
 
 -export([pre_request/4, post_request/4, plugin_info/0]).
 
+-type reply() :: {reply, integer(), #{binary() => binary()}, binary()}.
+
 -spec pre_request(cowboy_req:req(), term(), map(), term()) ->
-    {ok, cowboy_req:req(), term()} | {stop, nova_plugin:reply(), cowboy_req:req(), term()}.
+    {ok, cowboy_req:req(), term()} | {stop, reply(), cowboy_req:req(), term()}.
 pre_request(Req, _Env, Options, State) ->
     case nova_auth_actor:fetch(Req) of
         {ok, Actor} ->
@@ -77,6 +79,6 @@ resolve_unauthorized(_) ->
     {status, 401}.
 
 unauthorized_reply({redirect, Url}) ->
-    {reply, 302, [{~"location", unicode:characters_to_binary(Url)}], ~""};
+    {reply, 302, #{~"location" => unicode:characters_to_binary(Url)}, ~""};
 unauthorized_reply({status, Code}) ->
-    {reply, Code, [], ~""}.
+    {reply, Code, #{}, ~""}.

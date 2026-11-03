@@ -41,7 +41,7 @@ anonymous_redirect_stops_with_302(_Config) ->
     Options = #{on_unauthorized => {redirect, "/login"}},
     Req = req(~"plugin-anon-1"),
     ?assertEqual(
-        {stop, {reply, 302, [{~"location", ~"/login"}], ~""}, Req, state},
+        {stop, {reply, 302, #{~"location" => ~"/login"}, ~""}, Req, state},
         nova_auth_oidc_plugin:pre_request(Req, #{}, Options, state)
     ).
 
@@ -49,21 +49,21 @@ anonymous_redirect_to_provider_login(_Config) ->
     Options = #{auth_mod => test_oidc_config, provider => authentik},
     Req = req(~"plugin-anon-2"),
     ?assertEqual(
-        {stop, {reply, 302, [{~"location", ~"/auth/authentik/login"}], ~""}, Req, state},
+        {stop, {reply, 302, #{~"location" => ~"/auth/authentik/login"}, ~""}, Req, state},
         nova_auth_oidc_plugin:pre_request(Req, #{}, Options, state)
     ).
 
 anonymous_status_stops_with_code(_Config) ->
     Req = req(~"plugin-anon-3"),
     ?assertEqual(
-        {stop, {reply, 403, [], ~""}, Req, state},
+        {stop, {reply, 403, #{}, ~""}, Req, state},
         nova_auth_oidc_plugin:pre_request(Req, #{}, #{on_unauthorized => {status, 403}}, state)
     ).
 
 anonymous_without_options_is_401(_Config) ->
     Req = req(~"plugin-anon-4"),
     ?assertEqual(
-        {stop, {reply, 401, [], ~""}, Req, state},
+        {stop, {reply, 401, #{}, ~""}, Req, state},
         nova_auth_oidc_plugin:pre_request(Req, #{}, #{}, state)
     ).
 
