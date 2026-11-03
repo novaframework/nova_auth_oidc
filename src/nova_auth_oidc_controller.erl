@@ -193,11 +193,14 @@ handle_code(Req, AuthMod, Provider, ProviderCfg, Code, Nonce, PkceVerifier) ->
     case retrieve_token_and_userinfo(WorkerName, ClientId, ClientSecret, Code, TokenOpts) of
         {ok, _Token, Userinfo} ->
             Actor = build_actor(AuthMod, Provider, Userinfo),
-            {ok, Req1} = nova_auth_actor:renew(Req),
-            ok = nova_auth_actor:store(Req1, Actor),
-            case nova_auth_oidc:config(AuthMod, on_success) of
-                {redirect, Url} -> {redirect, Url, Req1};
-                _ -> {redirect, ~"/", Req1}
+            case nova_auth_actor:sign_in(Req, Actor) of
+                {ok, Req1} ->
+                    case nova_auth_oidc:config(AuthMod, on_success) of
+                        {redirect, Url} -> {redirect, Url, Req1};
+                        _ -> {redirect, ~"/", Req1}
+                    end;
+                {error, Reason} ->
+                    fail_callback(Req, AuthMod, {session, Reason})
             end;
         {error, Reason} ->
             fail_callback(Req, AuthMod, Reason)

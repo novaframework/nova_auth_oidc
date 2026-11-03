@@ -17,7 +17,8 @@
     callback_other_provider_is_401/1,
     callback_provider_error_is_401_and_single_use/1,
     callback_state_consumed_before_exchange/1,
-    callback_userinfo_error_is_401/1
+    callback_userinfo_error_is_401/1,
+    callback_session_store_error_is_401/1
 ]).
 
 -define(OLD_ID, ~"planted-session-id").
@@ -39,7 +40,8 @@ all() ->
         callback_other_provider_is_401,
         callback_provider_error_is_401_and_single_use,
         callback_state_consumed_before_exchange,
-        callback_userinfo_error_is_401
+        callback_userinfo_error_is_401,
+        callback_session_store_error_is_401
     ].
 
 init_per_suite(Config) ->
@@ -204,6 +206,24 @@ callback_userinfo_error_is_401(_Config) ->
     end,
     ?assertEqual([], test_session_backend:keys(?OLD_ID)),
     ?assertEqual({error, not_found}, nova_auth_actor:fetch(req())).
+
+callback_session_store_error_is_401(_Config) ->
+    ok = application:set_env(nova, session_manager, test_failing_session_backend),
+    ok = test_log_capture:start(),
+    try
+        ?assertEqual({status, 401}, nova_auth_oidc_controller:callback(req())),
+        ?assertMatch(
+            [#{msg := {report, #{reason := session}}}],
+            [
+                E
+             || #{msg := {report, #{msg := ~"nova_auth_oidc authentication failed"}}} = E <-
+                    test_log_capture:events()
+            ]
+        )
+    after
+        test_log_capture:stop(),
+        application:set_env(nova, session_manager, test_session_backend)
+    end.
 
 callback(Req) ->
     case nova_auth_oidc_controller:callback(Req) of
