@@ -8,11 +8,11 @@ compatible with any auth strategy.
 
 ```erlang
 #{prefix => ~"/protected",
-  plugins => [{pre_request, [{nova_auth_oidc_plugin, #{
+  plugins => [{pre_request, nova_auth_oidc_plugin, #{
       auth_mod => my_oidc_config,
       provider => authentik,
       on_unauthorized => {redirect, ~"/auth/authentik/login"}
-  }}]}],
+  }}],
   routes => [...]}
 ```
 
