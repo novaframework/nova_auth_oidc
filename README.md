@@ -79,7 +79,7 @@ routes(_Env) ->
 5. Controller exchanges code for tokens via `oidcc`
 6. Controller retrieves userinfo from provider
 7. Claims are mapped to an actor via `nova_auth_claims`
-8. Actor is stored in session via `nova_auth_actor`
+8. Actor is signed in to the session via `nova_auth_actor`
 9. User is redirected to the success URL
 
 From this point, `nova_auth_security:require_authenticated()` works for all

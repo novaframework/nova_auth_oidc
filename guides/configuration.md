@@ -103,6 +103,10 @@ During the OIDC flow, temporary state is stored in the Nova session:
 
 The temporary keys are cleaned up after the callback completes.
 
+The callback signs the actor in with `nova_auth_actor:sign_in/2`. On a Nova
+whose `nova_session` module has `sign_in` that moves the client to a new
+session id, and nothing the session held before the login is carried over.
+
 ## Provider Worker Names
 
 Each provider gets a worker process registered as

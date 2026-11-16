@@ -3,7 +3,7 @@
 Nova controller for OpenID Connect authentication flows.
 
 Handles login redirect and OAuth callback endpoints. After successful
-authentication, stores a mapped actor in the Nova session via
+authentication, signs a mapped actor in to the Nova session via
 `nova_auth_actor`, making it compatible with `nova_auth_security`.
 
 ## Routes
@@ -64,10 +64,15 @@ login(#{bindings := #{provider := ProviderBin}} = Req) ->
 Handle the OAuth callback after the user authenticates with the provider.
 
 Exchanges the authorization code for tokens, retrieves user info,
-applies claims mapping, stores the actor in the session, and redirects
-to the configured success URL.
+applies claims mapping, signs the actor in with `nova_auth_actor:sign_in/2`,
+and redirects to the configured success URL with the request that carries the
+session of the actor.
 """.
--spec callback(map()) -> term().
+-spec callback(map()) ->
+    {redirect, term(), cowboy_req:req()}
+    | {redirect, term()}
+    | {status, term()}
+    | {status, 404, map(), binary()}.
 callback(#{bindings := #{provider := ProviderBin}} = Req) ->
     AuthMod = auth_mod(Req),
     Provider = binary_to_existing_atom(ProviderBin),
@@ -109,13 +114,13 @@ handle_code(Req, AuthMod, Provider, Code) ->
                     _ = nova_session:delete(Req, ~"oidc_pkce"),
                     _ = nova_session:delete(Req, ~"oidc_provider"),
 
-                    %% Map claims to actor and store in session
+                    %% Map claims to actor and sign it in
                     Actor = build_actor(AuthMod, Provider, Userinfo),
-                    ok = nova_auth_actor:store(Req, Actor),
+                    {ok, SignedIn} = nova_auth_actor:sign_in(Req, Actor),
 
                     case nova_auth_oidc:config(AuthMod, on_success) of
-                        {redirect, Url} -> {redirect, Url};
-                        _ -> {redirect, ~"/"}
+                        {redirect, Url} -> {redirect, Url, SignedIn};
+                        _ -> {redirect, ~"/", SignedIn}
                     end;
                 {error, Reason} ->
                     handle_failure(AuthMod, Reason)
